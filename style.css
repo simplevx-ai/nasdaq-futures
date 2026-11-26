@@ -240,3 +240,14 @@ ul.lvl { list-style: none; padding: 0; margin: 4px 0 8px; font-size: 14px; } ul.
 .scchip.sbuy { background: #E3F6EC; color: #0E6B3F; border-color: #8FD3AE; font-weight: 700; font-size: 12px; }
 .scchip.ssell { background: #E4ECFC; color: #1C4FB0; border-color: #9DB8EE; font-weight: 700; font-size: 12px; }
 @media (prefers-color-scheme: dark) { .scchip.sbuy { background: #12392A; color: #9BE7C2; border-color: #2C6E50; } .scchip.ssell { background: #172B52; color: #AFC6F5; border-color: #2E4E8C; } }
+
+/* 선택된 칩 잘 보이게 */
+.chip.on { background: #FFC83D; color: #1A1300; border: 2px solid #E0A800; font-weight: 800; box-shadow: 0 1px 4px rgba(224,168,0,.45); }
+.chip.on::before { content: '✓ '; }
+@media (prefers-color-scheme: dark) { .chip.on { background: #FFC83D; color: #1A1300; border-color: #FFD966; } }
+.calcintro { background: rgba(28,96,214,.08); border: 1px solid rgba(28,96,214,.3); border-radius: 10px; padding: 9px 11px; font-size: 13px; line-height: 1.55; }
+.calcgrid { display: grid; grid-template-columns: 1fr; gap: 2px 12px; }
+@media (min-width: 560px) { .calcgrid { grid-template-columns: 1fr 1fr; } }
+.calcgrid .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.calcsum { background: rgba(31,157,99,.10); border: 1px solid rgba(31,157,99,.45); border-radius: 10px; padding: 9px 11px; font-size: 14px; line-height: 1.55; margin-bottom: 8px; }
+table.calctbl { width: 100%; border-collapse: collapse; font-size: 13px; } table.calctbl th { text-align: left; font-weight: 500; color: var(--muted); padding: 5px 4px; border-bottom: 1px solid var(--line); } table.calctbl td { text-align: right; padding: 5px 4px; border-bottom: 1px solid var(--line); }
