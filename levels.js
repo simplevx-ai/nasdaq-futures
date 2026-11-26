@@ -114,5 +114,31 @@ const LV = (() => {
     const nb = buy.filter((x) => x.ok).length, ns = sell.filter((x) => x.ok).length;
     return { buy, sell, nb, ns, strongBuy: a.upScore >= 4 && nb >= 3, strongSell: a.dnScore >= 4 && ns >= 3 };
   }
-  return { profile, swings, levels, buyZone, sellZone, divergence, strong };
+  // 주식 분할(예: 10:1) 맞추기: 봉 기록에 분할 전 가격이 남아 있으면 변동성·매물대가 틀어짐.
+  // 직전 종가→이번 시가, 또는 한 봉 안의 시가→종가가 1.85배 넘게 바뀌고 그 비율이 흔한 분할 비율에 가까우면 그 앞 봉들을 같은 비율로 맞춘다.
+  const SPLIT_N = [2, 3, 4, 5, 8, 10, 15, 20, 25, 30, 40, 50, 100];
+  function fixSplits(cs) {
+    if (!cs || cs.length < 3) return cs;
+    const out = cs.map((k) => ({ t: k.t, o: k.o, h: k.h, l: k.l, c: k.c, v: k.v }));
+    let fixed = 0;
+    for (let i = out.length - 1; i >= 1; i--) {
+      const k = out[i];
+      let r = out[i - 1].c / k.o, within = false;
+      if (!(r > 1.85 || r < 0.54)) { r = k.o / k.c; within = true; if (!(r > 1.85 || r < 0.54)) continue; }
+      const big = r > 1 ? r : 1 / r, n = SPLIT_N.reduce((p, q) => (Math.abs(q - big) < Math.abs(p - big) ? q : p));
+      if (Math.abs(n - big) / n > (n <= 3 ? 0.06 : 0.25)) continue; // 분할 비율과 멀면 진짜 급등락으로 보고 그대로 둠(2·3배는 거의 딱 맞을 때만)
+      const f = r > 1 ? 1 / n : n;
+      for (let j = 0; j < i; j++) { const x = out[j]; x.o *= f; x.h *= f; x.l *= f; x.c *= f; x.v /= f; }
+      if (within) { // 분할이 그 봉 안에서 일어남: 분할 전 쪽 값(시가와, 분할 전에 찍힌 고가·저가)만 맞춤
+        k.o *= f; const hi = Math.max(k.o, k.c), lo = Math.min(k.o, k.c);
+        if (f < 1 && k.h > hi * 1.5) k.h *= f;
+        if (f > 1 && k.l < lo / 1.5) k.l *= f;
+        k.h = Math.max(k.h, hi); k.l = Math.min(k.l, lo);
+      }
+      fixed++;
+    }
+    out.splits = fixed;
+    return out;
+  }
+  return { profile, swings, levels, buyZone, sellZone, divergence, strong, fixSplits };
 })();

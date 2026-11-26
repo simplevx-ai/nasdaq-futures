@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -68,12 +68,25 @@ async function bybitEtfs() {
   KV.set('byEtf', { at: Date.now(), data }).catch(() => {});
   return data;
 }
+const STOCK_KO = { NVDA: '엔비디아', SNDK: '샌디스크', MU: '마이크론', SKHYNIX: 'SK하이닉스', SKHY: 'SK하이닉스(해외)', SAMSUNG: '삼성전자', TSLA: '테슬라', AAPL: '애플', GOOGL: '구글(알파벳)', AMZN: '아마존', MSFT: '마이크로소프트', META: '메타', AMD: 'AMD', INTC: '인텔', AVGO: '브로드컴', TSM: 'TSMC', MSTR: '스트래티지', CRCL: '서클', COIN: '코인베이스', ORCL: '오라클', MRVL: '마벨', ARM: 'ARM', DELL: '델', PLTR: '팔란티어', NFLX: '넷플릭스', HOOD: '로빈후드', CRWV: '코어위브', NBIS: '네비우스', RKLB: '로켓랩', ANTHROPIC: '앤트로픽(상장 전)', SPCX: '스페이스X(상장 전)', XIAOMI: '샤오미', CXMT: 'CXMT(창신메모리)', JD: '징둥', LITE: '루멘텀', COHR: '코히런트', AAOI: 'AAOI', AXTI: 'AXT', BE: '블룸에너지', BMNR: '비트마인', ZHONGJI: '중지쉬촹', UNITREE: '유니트리', ZHIPU: '즈푸AI', MINIMAX: '미니맥스', GIGADEV: '기가디바이스' };
+async function okxStocks() {
+  const hit = await KV.get('okxStk', null);
+  if (hit && Date.now() - hit.at < 86400e3) return hit.data;
+  const data = (await okxGet('/public/instruments?instType=SWAP')).filter((x) => x.instCategory === '3' && x.state === 'live' && /-USDT-SWAP$/.test(x.instId)).map((x) => x.instId.replace(/-USDT-SWAP$/, ''));
+  KV.set('okxStk', { at: Date.now(), data }).catch(() => {});
+  return data;
+}
+const addStocks = (L) => (L || []).forEach((s) => { if (!SCAN.META[s]) SCAN.META[s] = { name: STOCK_KO[s] || '개별주(OKX)', g: 'stock', lev: 1, auto: true }; });
+const isStock = (s) => !!(SCAN.META[s] && SCAN.META[s].g === 'stock');
 async function tickers() {
   const hit = await KV.get('tickers', null);
-  if (hit && Date.now() - hit.at < 60e3) { hit.data.extra.forEach((s) => { if (!SCAN.META[s]) SCAN.META[s] = { name: 'ETF(바이비트 분류)', g: 'other', lev: 1, auto: true }; }); return hit.data; }
-  const [o, b, y, e] = await Promise.allSettled([okxGet('/market/tickers?instType=SWAP'), bnGet('/fapi/v1/ticker/24hr'), byGet('/v5/market/tickers?category=linear'), bybitEtfs()]);
+  if (hit && Date.now() - hit.at < 60e3) { hit.data.extra.forEach((s) => { if (!SCAN.META[s]) SCAN.META[s] = { name: 'ETF(바이비트 분류)', g: 'other', lev: 1, auto: true }; }); addStocks(hit.data.stocks); return hit.data; }
+  const [o, b, y, e, k] = await Promise.allSettled([okxGet('/market/tickers?instType=SWAP'), bnGet('/fapi/v1/ticker/24hr'), byGet('/v5/market/tickers?category=linear'), bybitEtfs(), okxStocks()]);
   const extra = e.status === 'fulfilled' ? e.value.filter((s) => !SCAN.META[s]) : [];
   extra.forEach((s) => { SCAN.META[s] = { name: 'ETF(바이비트 분류)', g: 'other', lev: 1, auto: true }; });
+  // ETF 목록(직접 적은 것 + 바이비트 ETF 분류)에 없는 OKX 종목 = 개별주. 같은 종목이 두 묶음에 겹치지 않음
+  const stocks = k.status === 'fulfilled' ? k.value.filter((s) => !SCAN.META[s] || isStock(s)) : [];
+  addStocks(stocks);
   const out = {};
   for (const s of Object.keys(SCAN.META)) {
     const x = o.status === 'fulfilled' ? o.value.find((t) => t.instId === s + '-USDT-SWAP') : null;
@@ -89,7 +102,7 @@ async function tickers() {
     out[s].px = out[s].okx || out[s].bn || out[s].by;
     out[s].range = ['okx', 'bn', 'by'].map((k) => out[s][k] && out[s][k].rg).find((v) => v != null && Number.isFinite(v)) ?? null;
   }
-  const data = { t: out, extra, okxOk: o.status === 'fulfilled', bnOk: b.status === 'fulfilled' && Array.isArray(b.value), byOk: y.status === 'fulfilled', at: Date.now() };
+  const data = { t: out, extra, stocks, okxOk: o.status === 'fulfilled', bnOk: b.status === 'fulfilled' && Array.isArray(b.value), byOk: y.status === 'fulfilled', at: Date.now() };
   KV.set('tickers', { at: Date.now(), data }).catch(() => {});
   return data;
 }
@@ -104,13 +117,14 @@ async function candlesFrom(sym, src, tf) {
   KV.set(key, { at: Date.now(), data }).catch(() => {});
   return data;
 }
-// OKX(직접 거래하는 곳) → 바이낸스 → 바이비트 순. 봉이 40개 미만이면 다음 거래소
+// OKX(직접 거래하는 곳) → 바이비트 → 바이낸스 순. 봉이 40개 미만이면 다음 거래소
 async function candles(sym, tf, T) {
   const t = T.t[sym]; if (!t) throw new Error(sym + ' 시세가 없습니다');
   let best = null;
-  for (const src of ['okx', 'bn', 'by']) {
+  for (const src of ['okx', 'by', 'bn']) {
+    // 봉마다 주식 분할 전 가격을 맞춘 뒤 씀(LV.fixSplits)
     if (!t[src]) continue;
-    try { const cs = await candlesFrom(sym, src, tf); if (!best || cs.length > best.cs.length) best = { src, cs }; if (cs.length >= 40) return { src, cs }; } catch { /* 다음 거래소 */ }
+    try { const cs = LV.fixSplits(await candlesFrom(sym, src, tf)); if (!best || cs.length > best.cs.length) best = { src, cs }; if (cs.length >= 40) return { src, cs }; } catch { /* 다음 거래소 */ }
   }
   if (!best) throw new Error(sym + ' 봉 데이터를 받지 못했습니다');
   return best;
@@ -119,6 +133,10 @@ async function candles(sym, tf, T) {
 const CALM = { vol: 5e6, chg: 15, range: 20, atr: 12 }; // atr: 일봉 ATR% 12% 이상은 뺌(3배 ETF도 평소엔 이 안)
 const calmWhy = (tk) => (!tk ? '시세 없음' : tk.vol < CALM.vol ? `거래 적음(24시간 ${money(tk.vol)})` : Math.abs(tk.px.chg) > CALM.chg ? `급등락(24시간 ${pct(tk.px.chg)})` : tk.range != null && tk.range > CALM.range ? `하루 고저 폭 ${tk.range.toFixed(0)}%` : '');
 const isCalm = (tk) => !calmWhy(tk);
+// 개별주는 하루 변동성 30%까지 보여 줌(그 안에서도 ETF 기준을 넘으면 ⚠️)
+const STOCK_MAX = { vol: 2e6, chg: 30, range: 30, atr: 30 };
+const stockWhy = (tk) => (!tk ? '시세 없음' : tk.vol < STOCK_MAX.vol ? `거래 적음(24시간 ${money(tk.vol)})` : Math.abs(tk.px.chg) > STOCK_MAX.chg ? `급등락(24시간 ${pct(tk.px.chg)})` : tk.range != null && tk.range > STOCK_MAX.range ? `하루 고저 폭 ${tk.range.toFixed(0)}%` : '');
+const okFor = (s, tk) => (isStock(s) ? !stockWhy(tk) : isCalm(tk));
 const dayStartUtc = () => Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
 
 /* ───────── 미국장 시간(뉴욕 기준) ───────── */
@@ -162,7 +180,7 @@ const scChip = (label, s) => `<span class="scchip s${Math.min(s, 4)}">${label} $
 /* ═════════ 📊 스캐너 ═════════ */
 const SORTS = { up: '🔼 반등 포착', dn: '🔽 하락 전환 포착', strong: '⭐ 강한 신호', spike: '📢 거래량 급증', atr: '🌊 변동성' };
 const HIGHER = { '15m': '1H', '30m': '4H', '1H': '4H', '4H': '1D', '1D': null };
-const SETS = { top: '거래량 상위', core: '나스닥·S&P', fav: '내가 많이 본' };
+const SETS = { top: '거래량 상위', stock: 'OKX 개별주', core: '나스닥·S&P', fav: '내가 많이 본' };
 const CORE2 = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY', 'US500'];
 async function viewScan() {
   const live = takeView();
@@ -182,7 +200,7 @@ async function viewScan() {
       <b>🌊 변동성</b>: 일봉 ATR(14)÷가격. 10%↑ 초고변동, 5~10% 고변동, 2~5% 중간, 2% 미만 낮음.<br>
       <b>⭐ 강한 신호</b>: 기본 점수가 4 이상이고, 아래 5가지 확인 중 3가지 이상이 맞을 때만. 매수: 상위 봉(예: 1시간봉이면 4시간봉)도 반등 점수 3 이상 · 지지 가격 위 1 ATR 안 · VWAP 위 · 최근 3봉에 거래량 1.5배 이상 양봉 · RSI 강세 다이버전스. 매도는 그 반대.<br>
       <b>📍 매수(매도) 검토 가격대</b>: 현재가 아래(위) 1.5 ATR 안의 지지(저항) 주변, 근거 2개 이상 겹친 곳 우선. 무효(손절) 가격 = 가격대 밖 1 ATR, 1차 목표 = 가장 가까운 저항(지지).<br>
-      <b>🛡️ 안정 기준</b>: 3개 거래소 24시간 거래 합계 500만 달러 이상 · 24시간 등락 ±15% 이내 · 24시간 고저 폭 20% 이내 · 일봉 변동성(ATR) 12% 미만인 종목만 봅니다. 급등락하거나 거래가 적은 종목은 순위·검색 목록에서 뺍니다.<br><b>묶음</b>: 거래량 상위 = 안정 기준을 통과한 종목 중 거래가 많은 20개 · 나스닥·S&P = QQQ·TQQQ·SQQQ·US100·SPY·US500 · 내가 많이 본 = 이 폰에서 📈 차트로 자주 연 종목 순서(조회수는 거래소가 주지 않아 내 기록으로 셈). 봉 데이터는 OKX → 바이낸스 → 바이비트 순.</div></details></div>
+      <b>🛡️ 안정 기준</b>: 3개 거래소 24시간 거래 합계 500만 달러 이상 · 24시간 등락 ±15% 이내 · 24시간 고저 폭 20% 이내 · 일봉 변동성(ATR) 12% 미만인 종목만 봅니다. 급등락하거나 거래가 적은 종목은 순위·검색 목록에서 뺍니다.<br><b>묶음</b>: 거래량 상위 = 안정 기준을 통과한 ETF 중 거래가 많은 20개 · OKX 개별주 = OKX에서 거래되는 개별 종목(하이닉스·엔비디아·샌디스크·마이크론 등)을 거래량 순으로, 하루 변동성 30%까지(거래 200만 달러↑·등락·고저 폭·일봉 ATR 30% 이내) 보여 주고 ETF 기준을 넘는 종목엔 ⚠️ · 나스닥·S&P = QQQ·TQQQ·SQQQ·US100·SPY·US500 · 내가 많이 본 = 이 폰에서 📈 차트로 자주 연 종목 순서(조회수는 거래소가 주지 않아 내 기록으로 셈). 봉 데이터는 OKX → 바이비트 → 바이낸스 순.</div></details></div>
     <div class="disc">OKX·바이낸스·바이비트 공개 시세 · 자동 주문 없음 · v${APP_VERSION}</div>`;
   view().querySelectorAll('[data-set]').forEach((b) => { b.onclick = async () => { prefs.set = b.dataset.set; await KV.set('scanPrefs', prefs); viewScan(); }; });
   view().querySelectorAll('[name=tf]').forEach((r) => { r.onchange = async () => { prefs.tf = r.value; await KV.set('scanPrefs', prefs); viewScan(); }; });
@@ -191,9 +209,10 @@ async function viewScan() {
   let T; try { T = await tickers(); } catch (e) { if (live()) $('#list').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
   if (!live()) return;
   if (!SETS[prefs.set]) prefs.set = 'top';
-  const all = Object.keys(T.t).sort((a, b) => T.t[b].vol - T.t[a].vol), skipped = all.filter((s) => T.t[s].vol >= 1e6 && !isCalm(T.t[s]));
+  const all = Object.keys(T.t).sort((a, b) => T.t[b].vol - T.t[a].vol), etfs = all.filter((s) => !isStock(s)), stks = all.filter((s) => isStock(s) && (T.t[s].okx || T.t[s].px));
+  const skipped = prefs.set === 'stock' ? stks.filter((s) => T.t[s].vol >= 1e6 && stockWhy(T.t[s])) : etfs.filter((s) => T.t[s].vol >= 1e6 && !isCalm(T.t[s]));
   const views = await KV.get('views', {});
-  let syms = prefs.set === 'core' ? CORE2.filter((s) => T.t[s] && isCalm(T.t[s])) : prefs.set === 'fav' ? Object.keys(views).filter((s) => T.t[s] && isCalm(T.t[s])).sort((a, b) => views[b] - views[a]).slice(0, 20) : all.filter((s) => isCalm(T.t[s])).slice(0, 30);
+  let syms = prefs.set === 'core' ? CORE2.filter((s) => T.t[s] && isCalm(T.t[s])) : prefs.set === 'fav' ? Object.keys(views).filter((s) => T.t[s] && okFor(s, T.t[s])).sort((a, b) => views[b] - views[a]).slice(0, 20) : prefs.set === 'stock' ? stks.filter((s) => !stockWhy(T.t[s])).slice(0, 30) : etfs.filter((s) => isCalm(T.t[s])).slice(0, 30);
   if (!live()) return;
   if (prefs.set === 'fav' && !syms.length) { $('#list').innerHTML = '<div class="card"><div class="muted">아직 본 종목이 없습니다. 📈 차트에서 종목을 열어 보면 많이 본 순서로 여기 모입니다.</div></div>'; }
   let done = 0;
@@ -210,7 +229,7 @@ async function viewScan() {
   if (prefs.set === 'fav' && !syms.length) return;
   const okRows = R.filter((x) => x && !x.error && x.a && !x.a.error);
   // 일봉 변동성(ATR)까지 너무 크면 뺌
-  const hot = okRows.filter((x) => x.d && x.d.atrPct >= CALM.atr), rows = okRows.filter((x) => !hot.includes(x)).slice(0, 20);
+  const hot = okRows.filter((x) => x.d && x.d.atrPct >= (isStock(x.s) ? STOCK_MAX.atr : CALM.atr)), rows = okRows.filter((x) => !hot.includes(x)).slice(0, 20);
   const skipNote = [...skipped.map((s) => `${s}(${calmWhy(T.t[s])})`), ...hot.map((x) => `${x.s}(일봉 변동성 ${x.d.atrPct.toFixed(1)}%)`)];
   function drawList() {
     const key = { up: (x) => x.a.upScore * 10 + (x.st ? x.st.nb : 0) - x.a.dnScore, dn: (x) => x.a.dnScore * 10 + (x.st ? x.st.ns : 0) - x.a.upScore, strong: (x) => (x.st ? Math.max(x.st.strongBuy ? x.st.nb : 0, x.st.strongSell ? x.st.ns : 0) : 0), spike: (x) => x.a.volRatio || 0, atr: (x) => (x.d && x.d.atrPct) || 0 }[prefs.sort] || ((x) => x.a.upScore);
@@ -241,6 +260,7 @@ function zoneBox(z, kind) {
 function scanRow(x, i, sort) {
   const m = SCAN.META[x.s], a = x.a, d = x.d, tk = x.tk, px = tk.px, st = x.st;
   const showBuy = a.upScore >= 3 || sort === 'up' || (st && st.strongBuy), showSell = a.dnScore >= 3 || sort === 'dn' || (st && st.strongSell);
+  const calmTag = !isCalm(tk) ? `<div style="font-size:12px;margin-top:3px;color:#B26B00">⚠️ 변동성 큼: ${esc(calmWhy(tk))}</div>` : '';
   const badge = st && st.strongBuy ? `<span class="scchip sbuy">🟢 강한 매수 신호 · 확인 ${st.nb}/5</span>` : st && st.strongSell ? `<span class="scchip ssell">🔴 강한 매도 신호 · 확인 ${st.ns}/5</span>` : '';
   const warn = [d && d.atrJump >= 1.5 ? `⚠️ 변동성 확대(ATR ${d.atrJump.toFixed(1)}배)` : '', a.volRatio >= 2 ? `📢 거래량 ${a.volRatio.toFixed(1)}배(${a.price >= a.open ? '양봉' : '음봉'})` : ''].filter(Boolean).join(' · ');
   const ck = (L) => `<ul class="checks">${L.map((c) => `<li>${c.ok ? '✅' : '⬜'} ${esc(c.name)}</li>`).join('')}</ul>`;
@@ -248,7 +268,7 @@ function scanRow(x, i, sort) {
       <div class="row spread"><span><b>${i + 1}. ${x.s}</b> <span class="muted" style="font-size:12px">${esc(m.name)}</span>${m.lev < 0 ? ' <span class="levtag inv">인버스</span>' : ''}</span><span class="${px.chg > 0 ? 'up' : px.chg < 0 ? 'down' : ''}" style="font-size:13px">${fmt(px.last)} ${pct(px.chg)}</span></div>
       <div class="row wrap" style="gap:4px;margin-top:4px">${scChip('🔼반등', a.upScore)}${scChip('🔽하락전환', a.dnScore)}<span class="scchip">거래량 ${a.volRatio != null ? a.volRatio.toFixed(1) + '배' : '-'}</span><span class="scchip">${SCAN.volClass(d && d.atrPct)} ${d && d.atrPct ? d.atrPct.toFixed(1) + '%' : ''}</span>${d ? `<span class="scchip ${d.trend === 'up' ? 'tup' : d.trend === 'down' ? 'tdn' : ''}">일봉 ${d.trend === 'up' ? '상승' : d.trend === 'down' ? '하락' : '횡보'}</span>` : ''}</div>
       ${warn ? `<div style="font-size:12px;margin-top:3px;color:#B26B00">${warn}</div>` : ''}
-      ${badge ? `<div style="margin-top:4px">${badge}</div>` : ''}
+      ${calmTag}${badge ? `<div style="margin-top:4px">${badge}</div>` : ''}
       ${showBuy && x.bz && (sort !== 'dn') ? zoneBox(x.bz, 'buy') : ''}${showSell && x.sz && (sort === 'dn' || (st && st.strongSell)) ? zoneBox(x.sz, 'sell') : ''}</summary>
     <div class="grid2" style="font-size:13px;margin-top:8px">
       <div>RSI(14) <b>${a.rsi != null ? a.rsi.toFixed(1) : '-'}</b></div><div>MACD 히스토그램 <b>${a.hist != null ? a.hist.toFixed(3) : '-'}</b></div>
@@ -266,6 +286,11 @@ function scanRow(x, i, sort) {
 
 /* ═════════ 📈 차트·매물대 ═════════ */
 const CHART_SYMS = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY'];
+const CHART_CATS = { idx: '📈 지수 ETF', stock: '🏢 OKX 개별주', etf: '🧺 기타 ETF' };
+function chartLists(T) {
+  const all = Object.keys(T.t).sort((a, b) => T.t[b].vol - T.t[a].vol);
+  return { idx: CORE2.filter((s) => T.t[s]), stock: all.filter((s) => isStock(s) && !stockWhy(T.t[s])).slice(0, 15), etf: all.filter((s) => !isStock(s) && !CORE2.includes(s) && isCalm(T.t[s])).slice(0, 12) };
+}
 async function viewChart(sym) {
   const live = takeView();
   setTitle(`📈 ${sym} 차트·매물대`);
@@ -274,14 +299,22 @@ async function viewChart(sym) {
   { const v = await KV.get('views', {}); v[sym] = (v[sym] || 0) + 1; await KV.set('views', v); }
   const T = await tickers();
   if (!live()) return;
-  const others = Object.keys(T.t).filter((s) => !CHART_SYMS.includes(s) && (isCalm(T.t[s]) || s === sym)).sort((a, b) => T.t[b].vol - T.t[a].vol);
-  view().innerHTML = `<div class="chips">${CHART_SYMS.filter((s) => T.t[s]).map((s) => `<a class="chip${s === sym ? ' on' : ''}" href="#/c/${s}">${s}</a>`).join('')}
+  const CL = chartLists(T), inCat = Object.keys(CL).find((c) => CL[c].includes(sym));
+  let cat = inCat || (await KV.get('chartCat', null)) || (isStock(sym) ? 'stock' : 'idx'); if (!CL[cat]) cat = 'idx';
+  if (inCat) KV.set('chartCat', inCat).catch(() => {});
+  if (!live()) return;
+  const shown = new Set(Object.values(CL).flat());
+  const others = Object.keys(T.t).filter((s) => !shown.has(s) && (okFor(s, T.t[s]) || s === sym)).sort((a, b) => T.t[b].vol - T.t[a].vol);
+  view().innerHTML = `<div class="chips" role="tablist" aria-label="종목 분류">${Object.entries(CHART_CATS).map(([k, v]) => `<button type="button" class="chip${k === cat ? ' on' : ''}" data-ccat="${k}">${v}</button>`).join('')}</div>
+    <div class="chips" id="csyms">${CL[cat].map((s) => `<a class="chip${s === sym ? ' on' : ''}" href="#/c/${s}">${s}${STOCK_KO[s] ? ' <span style="font-size:11px;opacity:.75">' + esc(STOCK_KO[s]) + '</span>' : ''}</a>`).join('')}${inCat ? '' : `<span class="chip on">${esc(sym)}</span>`}
       <select id="other" style="width:auto;min-height:32px;padding:4px 8px;border-radius:999px"><option value="">다른 종목…</option>${others.map((s) => `<option value="${s}"${s === sym ? ' selected' : ''}>${s} · ${esc(SCAN.META[s].name)}</option>`).join('')}</select></div>
     <div class="seg" role="radiogroup" aria-label="봉 단위">${Object.entries(TF).map(([k, v]) => `<label><input type="radio" name="tf" value="${k}"${prefs.tf === k ? ' checked' : ''}><span>${v.label.replace('봉', '')}</span></label>`).join('')}</div>
     <div class="card" style="margin-top:10px;padding:8px"><canvas id="cv" class="chart" style="height:340px" aria-label="캔들 차트와 매물대"></canvas>
       <div class="muted" style="font-size:11px;margin-top:4px">빨강 상승·파랑 하락 봉 · <span style="color:#E8A317">EMA20</span> · <span style="color:#8E5CF0">EMA50</span> · <span style="color:#1F9D63">VWAP(그날)</span> · 오른쪽 막대: 매물대(최근 200봉) · <span style="color:#E8A317">━ POC</span> · ┅ 가치영역(VAH·VAL)</div></div>
     <div id="sum"><div class="card"><div class="muted">계산 중…</div></div></div>`;
   $('#other').onchange = (e) => { if (e.target.value) location.hash = '#/c/' + e.target.value; };
+  // 분류를 누르면 그 분류의 종목 칩으로 바꾸고, 첫 종목 차트로
+  view().querySelectorAll('[data-ccat]').forEach((b) => { b.onclick = async () => { const c = b.dataset.ccat; await KV.set('chartCat', c); if (CL[c] && CL[c].length) location.hash = '#/c/' + (CL[c].includes(sym) ? sym : CL[c][0]); }; });
   view().querySelectorAll('[name=tf]').forEach((r) => { r.onchange = async () => { prefs.tf = r.value; await KV.set('chartPrefs', prefs); viewChart(sym); }; });
   let A; try { A = await candles(sym, prefs.tf, T); } catch (e) { if (live()) $('#sum').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
   if (!live()) return;
@@ -469,7 +502,23 @@ async function viewSignals() {
     try { await relay('saveScan', { enabled: e.target.checked }); await KV.set('scAlert', { enabled: e.target.checked }); toast(e.target.checked ? '아침 정리를 켰습니다' : '아침 정리를 껐습니다'); }
     catch (err) { e.target.checked = !e.target.checked; alert('저장 실패: ' + err.message); }
   };
-  if (await relayOn()) relay('ping').then(async (d) => { if (d.scan) { const cb = $('#scAl'); if (cb) cb.checked = !!d.scan.enabled; await KV.set('scAlert', { enabled: !!d.scan.enabled }); } }).catch(() => {});
+  const sg = await KV.get('stAlert', { enabled: false });
+  if (!live()) return;
+  const host2 = document.createElement('div'); view().appendChild(host2);
+  host2.innerHTML = `<div class="card"><div class="row spread"><b>⭐ 강한 신호 디스코드 알림</b><label class="row" style="margin:0;color:var(--ink)"><input type="checkbox" id="stAl" ${sg.enabled ? 'checked' : ''} style="width:22px;min-height:22px"> 켜기</label></div>
+    <div class="muted" style="font-size:13px;margin-top:4px">매시 정각이 지나 1시간봉이 끝나면, 거래량 상위 ETF(안정 기준)와 OKX 개별주(하루 변동성 30% 이내)에서 ⭐강한 매수·매도 신호가 <b>새로</b> 뜬 종목을 디스코드로 보냅니다. 같은 종목·같은 방향은 하루 한 번만(중복 없음). 시세는 OKX(없으면 바이비트), 상위 봉은 4시간봉.</div><div id="stInfo" class="muted" style="font-size:12px;margin-top:4px"></div></div>`;
+  $('#stAl').onchange = async (e) => {
+    if (e.target.checked && !(await relayOn())) { e.target.checked = false; alert('도구 화면에서 알림 스크립트를 먼저 연결해 주세요'); return; }
+    try { const d = await relay('saveStrong', { enabled: e.target.checked }); if (d.enabled === undefined) throw new Error('스크립트를 v10 이상으로 바꿔야 합니다'); await KV.set('stAlert', { enabled: e.target.checked }); toast(e.target.checked ? '강한 신호 알림을 켰습니다' : '강한 신호 알림을 껐습니다'); }
+    catch (err) { e.target.checked = !e.target.checked; alert('저장 실패: ' + err.message); }
+  };
+  if (await relayOn()) relay('ping').then(async (d) => {
+    if (d.scan) { const cb = $('#scAl'); if (cb) cb.checked = !!d.scan.enabled; await KV.set('scAlert', { enabled: !!d.scan.enabled }); }
+    const info = $('#stInfo'); if (!info) return;
+    if (!d.strong) { info.innerHTML = '<span style="color:var(--red)">스크립트가 v10보다 옛 버전이라 아직 쓸 수 없습니다</span>'; return; }
+    const cb = $('#stAl'); if (cb) cb.checked = !!d.strong.enabled; await KV.set('stAlert', { enabled: !!d.strong.enabled });
+    info.textContent = `스크립트 v${d.version} · ${d.strong.enabled ? '켜짐' : '꺼짐'}${d.strong.at ? ' · 마지막 확인 ' + kTime(d.strong.at) : ''}${d.strong.sentToday != null ? ' · 오늘 보낸 신호 ' + d.strong.sentToday + '개' : ''}`;
+  }).catch(() => {});
 }
 
 /* ═════════ 🧮 도구(청산가 계산기·연결 설정) ═════════ */
