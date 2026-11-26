@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.4.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -81,12 +81,13 @@ async function tickers() {
     const w = y.status === 'fulfilled' ? y.value.list.find((t) => t.symbol === s + 'USDT') : null;
     if (!x && !z && !w) continue;
     out[s] = {
-      okx: x ? { last: +x.last, chg: ((+x.last / +x.open24h) - 1) * 100, vol: +x.volCcy24h * +x.last } : null,
-      bn: z ? { last: +z.lastPrice, chg: +z.priceChangePercent, vol: +z.quoteVolume } : null,
-      by: w ? { last: +w.lastPrice, chg: +w.price24hPcnt * 100, vol: +w.turnover24h, oiUsd: +w.openInterestValue, funding: w.fundingRate === '' ? null : +w.fundingRate, mark: +w.markPrice, index: +w.indexPrice, next: +w.nextFundingTime } : null,
+      okx: x ? { last: +x.last, chg: +x.open24h ? ((+x.last / +x.open24h) - 1) * 100 : 0, vol: +x.volCcy24h * +x.last, rg: +x.low24h ? (+x.high24h / +x.low24h - 1) * 100 : null } : null,
+      bn: z ? { last: +z.lastPrice, chg: +z.priceChangePercent, vol: +z.quoteVolume, rg: +z.lowPrice ? (+z.highPrice / +z.lowPrice - 1) * 100 : null } : null,
+      by: w ? { last: +w.lastPrice, chg: +w.price24hPcnt * 100, vol: +w.turnover24h, oiUsd: +w.openInterestValue, funding: w.fundingRate === '' ? null : +w.fundingRate, mark: +w.markPrice, index: +w.indexPrice, next: +w.nextFundingTime, rg: +w.lowPrice24h ? (+w.highPrice24h / +w.lowPrice24h - 1) * 100 : null } : null,
     };
     out[s].vol = ['okx', 'bn', 'by'].reduce((a, k) => a + (out[s][k] ? out[s][k].vol : 0), 0);
     out[s].px = out[s].okx || out[s].bn || out[s].by;
+    out[s].range = ['okx', 'bn', 'by'].map((k) => out[s][k] && out[s][k].rg).find((v) => v != null && Number.isFinite(v)) ?? null;
   }
   const data = { t: out, extra, okxOk: o.status === 'fulfilled', bnOk: b.status === 'fulfilled' && Array.isArray(b.value), byOk: y.status === 'fulfilled', at: Date.now() };
   KV.set('tickers', { at: Date.now(), data }).catch(() => {});
@@ -114,6 +115,10 @@ async function candles(sym, tf, T) {
   if (!best) throw new Error(sym + ' 봉 데이터를 받지 못했습니다');
   return best;
 }
+// 안정적으로 매매할 만한 종목만: 거래가 충분하고 하루 움직임이 지나치지 않은 것(검색·순위·스캐너 모두 이 기준)
+const CALM = { vol: 5e6, chg: 15, range: 20, atr: 12 }; // atr: 일봉 ATR% 12% 이상은 뺌(3배 ETF도 평소엔 이 안)
+const calmWhy = (tk) => (!tk ? '시세 없음' : tk.vol < CALM.vol ? `거래 적음(24시간 ${money(tk.vol)})` : Math.abs(tk.px.chg) > CALM.chg ? `급등락(24시간 ${pct(tk.px.chg)})` : tk.range != null && tk.range > CALM.range ? `하루 고저 폭 ${tk.range.toFixed(0)}%` : '');
+const isCalm = (tk) => !calmWhy(tk);
 const dayStartUtc = () => Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
 
 /* ───────── 미국장 시간(뉴욕 기준) ───────── */
@@ -157,7 +162,8 @@ const scChip = (label, s) => `<span class="scchip s${Math.min(s, 4)}">${label} $
 /* ═════════ 📊 스캐너 ═════════ */
 const SORTS = { up: '🔼 반등 포착', dn: '🔽 하락 전환 포착', strong: '⭐ 강한 신호', spike: '📢 거래량 급증', atr: '🌊 변동성' };
 const HIGHER = { '15m': '1H', '30m': '4H', '1H': '4H', '4H': '1D', '1D': null };
-const SETS = { top: '자동 상위 20', core: '핵심(나스닥·S&P·반도체)', nasdaq: '나스닥100', sp500: 'S&P500', semi: '반도체', single: '개별주 레버리지', other: '기타 ETF' };
+const SETS = { top: '거래량 상위', core: '나스닥·S&P', fav: '내가 많이 본' };
+const CORE2 = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY', 'US500'];
 async function viewScan() {
   const live = takeView();
   setTitle('📊 선물 스캐너');
@@ -176,7 +182,7 @@ async function viewScan() {
       <b>🌊 변동성</b>: 일봉 ATR(14)÷가격. 10%↑ 초고변동, 5~10% 고변동, 2~5% 중간, 2% 미만 낮음.<br>
       <b>⭐ 강한 신호</b>: 기본 점수가 4 이상이고, 아래 5가지 확인 중 3가지 이상이 맞을 때만. 매수: 상위 봉(예: 1시간봉이면 4시간봉)도 반등 점수 3 이상 · 지지 가격 위 1 ATR 안 · VWAP 위 · 최근 3봉에 거래량 1.5배 이상 양봉 · RSI 강세 다이버전스. 매도는 그 반대.<br>
       <b>📍 매수(매도) 검토 가격대</b>: 현재가 아래(위) 1.5 ATR 안의 지지(저항) 주변, 근거 2개 이상 겹친 곳 우선. 무효(손절) 가격 = 가격대 밖 1 ATR, 1차 목표 = 가장 가까운 저항(지지).<br>
-      '자동 상위 20'은 OKX·바이낸스·바이비트에서 거래가 가장 많은 ETF 선물 20개를 자동으로 고릅니다(바이비트가 ETF로 분류한 종목은 목록에 없어도 자동 포함). 봉 데이터는 OKX → 바이낸스 → 바이비트 순.</div></details></div>
+      <b>🛡️ 안정 기준</b>: 3개 거래소 24시간 거래 합계 500만 달러 이상 · 24시간 등락 ±15% 이내 · 24시간 고저 폭 20% 이내 · 일봉 변동성(ATR) 12% 미만인 종목만 봅니다. 급등락하거나 거래가 적은 종목은 순위·검색 목록에서 뺍니다.<br><b>묶음</b>: 거래량 상위 = 안정 기준을 통과한 종목 중 거래가 많은 20개 · 나스닥·S&P = QQQ·TQQQ·SQQQ·US100·SPY·US500 · 내가 많이 본 = 이 폰에서 📈 차트로 자주 연 종목 순서(조회수는 거래소가 주지 않아 내 기록으로 셈). 봉 데이터는 OKX → 바이낸스 → 바이비트 순.</div></details></div>
     <div class="disc">OKX·바이낸스·바이비트 공개 시세 · 자동 주문 없음 · v${APP_VERSION}</div>`;
   view().querySelectorAll('[data-set]').forEach((b) => { b.onclick = async () => { prefs.set = b.dataset.set; await KV.set('scanPrefs', prefs); viewScan(); }; });
   view().querySelectorAll('[name=tf]').forEach((r) => { r.onchange = async () => { prefs.tf = r.value; await KV.set('scanPrefs', prefs); viewScan(); }; });
@@ -184,10 +190,12 @@ async function viewScan() {
 
   let T; try { T = await tickers(); } catch (e) { if (live()) $('#list').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
   if (!live()) return;
-  let syms = Object.keys(T.t);
-  if (prefs.set === 'top') syms = syms.sort((a, b) => T.t[b].vol - T.t[a].vol).slice(0, 20);
-  else if (prefs.set === 'core') syms = SCAN.CORE.filter((s) => T.t[s]);
-  else syms = syms.filter((s) => SCAN.META[s].g === prefs.set);
+  if (!SETS[prefs.set]) prefs.set = 'top';
+  const all = Object.keys(T.t).sort((a, b) => T.t[b].vol - T.t[a].vol), skipped = all.filter((s) => T.t[s].vol >= 1e6 && !isCalm(T.t[s]));
+  const views = await KV.get('views', {});
+  let syms = prefs.set === 'core' ? CORE2.filter((s) => T.t[s] && isCalm(T.t[s])) : prefs.set === 'fav' ? Object.keys(views).filter((s) => T.t[s] && isCalm(T.t[s])).sort((a, b) => views[b] - views[a]).slice(0, 20) : all.filter((s) => isCalm(T.t[s])).slice(0, 30);
+  if (!live()) return;
+  if (prefs.set === 'fav' && !syms.length) { $('#list').innerHTML = '<div class="card"><div class="muted">아직 본 종목이 없습니다. 📈 차트에서 종목을 열어 보면 많이 본 순서로 여기 모입니다.</div></div>'; }
   let done = 0;
   const R = await pool(syms, 4, async (s) => {
     const A = await candles(s, prefs.tf, T), a = SCAN.analyze(A.cs, { dayStart: dayStartUtc(), daily: prefs.tf === '1D' });
@@ -198,8 +206,12 @@ async function viewScan() {
     done++; const el = $('#list .muted'); if (el) el.textContent = `분석 중… ${done}/${syms.length}`;
     return { s, src: A.src, a, d: d && !d.error ? d : null, tk: T.t[s], hiTf: htf, bz, sz, st };
   });
-  const rows = R.filter((x) => x && !x.error && x.a && !x.a.error);
   if (!live()) return;
+  if (prefs.set === 'fav' && !syms.length) return;
+  const okRows = R.filter((x) => x && !x.error && x.a && !x.a.error);
+  // 일봉 변동성(ATR)까지 너무 크면 뺌
+  const hot = okRows.filter((x) => x.d && x.d.atrPct >= CALM.atr), rows = okRows.filter((x) => !hot.includes(x)).slice(0, 20);
+  const skipNote = [...skipped.map((s) => `${s}(${calmWhy(T.t[s])})`), ...hot.map((x) => `${x.s}(일봉 변동성 ${x.d.atrPct.toFixed(1)}%)`)];
   function drawList() {
     const key = { up: (x) => x.a.upScore * 10 + (x.st ? x.st.nb : 0) - x.a.dnScore, dn: (x) => x.a.dnScore * 10 + (x.st ? x.st.ns : 0) - x.a.upScore, strong: (x) => (x.st ? Math.max(x.st.strongBuy ? x.st.nb : 0, x.st.strongSell ? x.st.ns : 0) : 0), spike: (x) => x.a.volRatio || 0, atr: (x) => (x.d && x.d.atrPct) || 0 }[prefs.sort] || ((x) => x.a.upScore);
     let L = rows.slice().sort((p, q) => key(q) - key(p));
@@ -211,7 +223,7 @@ async function viewScan() {
     }
     if (prefs.sort === 'strong') head = `<div class="muted" style="font-size:13px;margin-bottom:8px">기본 점수 4 이상 + 추가 확인 5가지 중 3가지 이상인 종목만 보여 줍니다.${L.length ? '' : '<br><b>지금은 강한 신호가 없습니다.</b> 확인이 덜 된 신호는 반등·하락 전환 목록에서 보세요.'}</div>`;
     if (prefs.sort === 'spike') head = `<div class="muted" style="font-size:13px;margin-bottom:8px">2배 이상 급증: ${L.filter((x) => x.a.volRatio >= 2).map((x) => `${x.s} ${x.a.volRatio.toFixed(1)}배(${x.a.price >= x.a.open ? '양봉' : '음봉'})`).join(', ') || '없음'}</div>`;
-    $('#list').innerHTML = `<div class="card"><h2>${SORTS[prefs.sort] || ''} <span class="muted">(${L.length}종목 · ${TF[prefs.tf].label})</span></h2>${head}${L.map((x, i) => scanRow(x, i, prefs.sort)).join('') || (prefs.sort === 'strong' ? '' : '<div class="muted">종목이 없습니다.</div>')}</div>`;
+    $('#list').innerHTML = `<div class="card"><h2>${SORTS[prefs.sort] || ''} <span class="muted">(${L.length}종목 · ${TF[prefs.tf].label})</span></h2>${head}${L.map((x, i) => scanRow(x, i, prefs.sort)).join('') || (prefs.sort === 'strong' ? '' : '<div class="muted">종목이 없습니다.</div>')}${skipNote.length ? `<details style="margin-top:6px"><summary class="muted" style="font-size:12px">🚫 변동성이 크거나 거래가 적어 뺀 종목 ${skipNote.length}개</summary><div class="muted" style="font-size:12px;margin-top:4px">${skipNote.map(esc).join(' · ')}</div></details>` : ''}</div>`;
   }
   drawList();
   const mk = await pool(['QQQ', 'SPY'], 2, async (s) => ({ s, d: SCAN.analyze((await candles(s, '1D', T)).cs, { daily: true }) }));
@@ -253,15 +265,16 @@ function scanRow(x, i, sort) {
 }
 
 /* ═════════ 📈 차트·매물대 ═════════ */
-const CHART_SYMS = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY', 'SOXL', 'SOXS'];
+const CHART_SYMS = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY'];
 async function viewChart(sym) {
   const live = takeView();
   setTitle(`📈 ${sym} 차트·매물대`);
   const prefs = await KV.get('chartPrefs', { tf: '1H' }); prefs.tf = fixTf(prefs.tf);
   await KV.set('lastChart', sym);
+  { const v = await KV.get('views', {}); v[sym] = (v[sym] || 0) + 1; await KV.set('views', v); }
   const T = await tickers();
   if (!live()) return;
-  const others = Object.keys(T.t).filter((s) => !CHART_SYMS.includes(s)).sort((a, b) => T.t[b].vol - T.t[a].vol);
+  const others = Object.keys(T.t).filter((s) => !CHART_SYMS.includes(s) && (isCalm(T.t[s]) || s === sym)).sort((a, b) => T.t[b].vol - T.t[a].vol);
   view().innerHTML = `<div class="chips">${CHART_SYMS.filter((s) => T.t[s]).map((s) => `<a class="chip${s === sym ? ' on' : ''}" href="#/c/${s}">${s}</a>`).join('')}
       <select id="other" style="width:auto;min-height:32px;padding:4px 8px;border-radius:999px"><option value="">다른 종목…</option>${others.map((s) => `<option value="${s}"${s === sym ? ' selected' : ''}>${s} · ${esc(SCAN.META[s].name)}</option>`).join('')}</select></div>
     <div class="seg" role="radiogroup" aria-label="봉 단위">${Object.entries(TF).map(([k, v]) => `<label><input type="radio" name="tf" value="${k}"${prefs.tf === k ? ' checked' : ''}><span>${v.label.replace('봉', '')}</span></label>`).join('')}</div>
@@ -280,7 +293,7 @@ async function viewChart(sym) {
   const vp = L.vp, d = a, px = T.t[sym].px;
   $('#sum').innerHTML = `<div class="card"><div class="row spread"><b style="font-size:18px">${sym} ${fmt(px.last)}</b><span class="${px.chg > 0 ? 'up' : 'down'}">${pct(px.chg)} (24시간)</span></div>
       <div class="row wrap" style="gap:4px;margin-top:6px">${scChip('🔼반등', a.upScore)}${scChip('🔽하락전환', a.dnScore)}<span class="scchip">RSI ${a.rsi.toFixed(1)}</span><span class="scchip">ATR ${a.atrPct.toFixed(2)}%</span><span class="scchip">거래량 ${a.volRatio ? a.volRatio.toFixed(1) : '-'}배</span></div>
-      <div class="muted" style="font-size:12px;margin-top:6px">${esc(SCAN.META[sym].name)} · ${EXN[A.src]} ${TF[prefs.tf].label} ${cs.length}개</div></div>
+      ${calmWhy(T.t[sym]) ? `<div class="warnlist" style="font-size:12px">⚠️ 안정 기준 밖 종목: ${esc(calmWhy(T.t[sym]))}. 갑자기 크게 움직이거나 원하는 가격에 사고팔기 어려울 수 있습니다.</div>` : ''}<div class="muted" style="font-size:12px;margin-top:6px">${esc(SCAN.META[sym].name)} · ${EXN[A.src]} ${TF[prefs.tf].label} ${cs.length}개</div></div>
     <div class="card"><h2>🧱 매물대 <span class="muted">(최근 ${Math.min(200, cs.length)}봉 거래량 분포)</span></h2>
       ${vp ? `<div class="grid2" style="font-size:14px"><div>POC(매물 중심) <b>${fmt(vp.poc)}</b></div><div>가치영역 <b>${fmt(vp.val)}~${fmt(vp.vah)}</b></div></div>
       <div style="font-size:14px;margin-top:6px">현재 위치: <b>${esc(L.where)}</b>${L.inLvn ? ' · <span style="color:#B26B00">매물이 적은 빈 구간(빨리 움직이기 쉬움)</span>' : ''}</div>
@@ -342,7 +355,7 @@ function drawChart(cv, all, vp, a) {
 }
 
 /* ═════════ 🧭 선물 지표 ═════════ */
-const FUT_SYMS = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY', 'SOXL', 'SOXS'];
+const FUT_SYMS = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY'];
 async function futData() {
   const hit = await KV.get('fut', null);
   if (hit && Date.now() - hit.at < 3 * 60e3) return hit.data;
@@ -375,19 +388,33 @@ async function futData() {
       try { const r = (await byGet(`/v5/market/account-ratio?category=linear&symbol=${sym}&period=1h&limit=1`)).list; if (r.length) { const bu = +r[0].buyRatio, se = +r[0].sellRatio; z.ls = se ? bu / se : null; z.longPct = bu * 100; } } catch { /* 없음 */ }
       o.by = z;
     }
+    // 게이트: 24시간 청산 금액·미결제(계약 수) 변화 — 게이트에 없는 종목은 건너뜀
+    try { const r = await (await fetch(`https://api.gateio.ws/api/v4/futures/usdt/contract_stats?contract=${s}_USDT&interval=1h&limit=25`)).json();
+      const h = (Array.isArray(r) ? r : []).slice().sort((p, q) => p.time - q.time);
+      if (h.length) { const L = h[h.length - 1], F = h[0], d24 = h.slice(-24); o.gt = { oiChg: +F.open_interest ? ((+L.open_interest / +F.open_interest) - 1) * 100 : null, liqL: d24.reduce((a, z) => a + (+z.long_liq_usd || 0), 0), liqS: d24.reduce((a, z) => a + (+z.short_liq_usd || 0), 0) }; } } catch { /* 없음 */ }
     out[s] = o;
   });
   const data = { at: Date.now(), rows: out };
   KV.set('fut', { at: Date.now(), data }).catch(() => {});
   return data;
 }
+// 가격과 미결제(계약 수) 변화로 지금 무슨 일이 일어나는지
 function oiRead(priceChg, oiChg) {
-  if (priceChg == null || oiChg == null) return { t: '판단 자료 부족', c: 'var(--muted)' };
-  if (priceChg > 0.3 && oiChg > 2) return { t: '가격↑ 미결제↑ — 새 매수 유입(상승에 힘이 있음)', c: 'var(--red)' };
-  if (priceChg > 0.3 && oiChg < -2) return { t: '가격↑ 미결제↓ — 숏 청산이 끌어올림(오래 못 갈 수 있음)', c: '#B26B00' };
-  if (priceChg < -0.3 && oiChg > 2) return { t: '가격↓ 미결제↑ — 새 매도 유입(하락에 힘이 있음)', c: 'var(--blue)' };
-  if (priceChg < -0.3 && oiChg < -2) return { t: '가격↓ 미결제↓ — 롱 청산 하락(매도가 지쳐 갈 수 있음)', c: '#B26B00' };
-  return { t: '가격·미결제 변화가 작아 뚜렷하지 않음', c: 'var(--muted)' };
+  if (priceChg == null || oiChg == null) return { s: '자료 부족', t: '판단 자료 부족', c: 'var(--muted)' };
+  if (priceChg > 0.3 && oiChg > 2) return { s: '새 롱 유입', t: '가격↑ 미결제↑ — 새 롱(매수) 유입, 상승에 힘이 있음', c: 'var(--red)' };
+  if (priceChg > 0.3 && oiChg < -2) return { s: '숏 커버링', t: '가격↑ 미결제↓ — 숏 커버링(숏이 되사서 정리·숏 청산)이 끌어올림, 새 매수가 없으면 오래 못 갈 수 있음', c: '#B26B00' };
+  if (priceChg < -0.3 && oiChg > 2) return { s: '새 숏 유입', t: '가격↓ 미결제↑ — 새 숏(매도) 유입, 하락에 힘이 있음', c: 'var(--blue)' };
+  if (priceChg < -0.3 && oiChg < -2) return { s: '롱 커버링', t: '가격↓ 미결제↓ — 롱 커버링(롱이 팔아서 정리·롱 청산) 하락, 매도가 지쳐 갈 수 있음', c: '#B26B00' };
+  return { s: '뚜렷하지 않음', t: '가격·미결제 변화가 작아 뚜렷하지 않음', c: 'var(--muted)' };
+}
+const oiPick = (o) => { const b = o.bn || {}, y = o.by || {}, g = o.gt || {}; return b.oiChg != null ? ['바이낸스', b.oiChg] : y.oiChg != null ? ['바이비트', y.oiChg] : g.oiChg != null ? ['게이트', g.oiChg] : ['', null]; };
+const liqLine = (g) => (!g || g.liqL == null ? '' : g.liqL + g.liqS <= 0 ? '청산 거의 없음' : `청산 롱 ${money(g.liqL)} / 숏 ${money(g.liqS)}${g.liqS > g.liqL * 1.5 ? ' <b class="up">숏이 더 털림</b>' : g.liqL > g.liqS * 1.5 ? ' <b class="down">롱이 더 털림</b>' : ''}`);
+function covCard(L) {
+  const line = (o) => { const rd = oiRead(o.px.chg, oiPick(o)[1]), lq = liqLine(o.gt); return `<li><b>${o.s}</b> <span class="${o.px.chg > 0 ? 'up' : 'down'}">${pct(o.px.chg)}</span> · <b style="color:${rd.c}">${rd.s}</b> <span class="muted">(미결제 ${pct(oiPick(o)[1])})</span>${lq ? ' · ' + lq : ''}</li>`; };
+  return `<div class="card"><h2>💥 청산·커버링 요약 <span class="muted">(24시간)</span></h2><ul class="lvl" style="font-size:13px">${L.map(line).join('')}</ul>
+    <div class="muted" style="font-size:12px;line-height:1.6"><b>숏 커버링</b>: 숏(하락 베팅)이 손실을 줄이려 되사거나 강제 청산되며 값이 오르는 것 — 가격↑ 미결제↓. 새 매수 없이 오른 것이라 힘이 빠지면 다시 내리기 쉽습니다.<br>
+      <b>롱 커버링</b>: 롱(상승 베팅)이 팔아서 정리하거나 강제 청산되며 값이 내리는 것 — 가격↓ 미결제↓. 정리가 끝나 가면 하락이 멈추기도 합니다.<br>
+      <b>청산</b>: 증거금이 모자라 거래소가 강제로 포지션을 닫는 것(게이트 기준 금액, 게이트에 없는 종목은 표시 안 함). 한쪽 청산이 몰리면 그 방향으로 연쇄적으로 크게 움직였다는 뜻이고, 크게 털린 뒤엔 방향이 바뀌기도 합니다.</div></div>`;
 }
 async function viewFut() {
   const live = takeView();
@@ -407,12 +434,12 @@ async function viewFut() {
   if (!live()) return;
   const fr = (x) => (x == null ? '-' : (x * 100).toFixed(4) + '%');
   const rows = FUT_SYMS.map((s) => D.rows[s]).filter(Boolean).map((o) => {
-    const b = o.bn || {}, k = o.okx || {}, y = o.by || {}, oiSrc = b.oiChg != null ? ['바이낸스', b.oiChg] : y.oiChg != null ? ['바이비트', y.oiChg] : ['', null];
+    const b = o.bn || {}, k = o.okx || {}, y = o.by || {}, oiSrc = oiPick(o);
     const rd = oiRead(o.px.chg, oiSrc[1]), fHot = [k.funding, b.funding, y.funding].some((f) => f != null && Math.abs(f) >= 0.0003);
     const lsMax = [b.ls, y.ls].filter((v) => v != null), lsWarn = lsMax.some((v) => v >= 2.5 || v <= 0.6);
     const lsv = (q) => (q.ls != null ? `${q.ls.toFixed(2)} (롱 ${q.longPct.toFixed(0)}%)` : '-');
     return `<div class="card"><div class="row spread"><b style="font-size:16px">${o.s} <span class="muted" style="font-size:12px">${esc(SCAN.META[o.s].name)}</span></b><span class="${o.px.chg > 0 ? 'up' : 'down'}">${fmt(o.px.last)} ${pct(o.px.chg)}</span></div>
-      <div style="font-size:13px;margin-top:6px;color:${rd.c}"><b>${esc(rd.t)}</b> <span class="muted">(${oiSrc[0]} 미결제 24시간 ${pct(oiSrc[1])})</span></div>
+      <div style="font-size:13px;margin-top:6px;color:${rd.c}"><b>${esc(rd.t)}</b> <span class="muted">(${oiSrc[0] ? `${oiSrc[0]} 미결제 24시간 ${pct(oiSrc[1])}` : '미결제 변화 자료 없음'})</span></div>${o.gt && liqLine(o.gt) ? `<div style="font-size:13px;margin-top:4px">💥 24시간 ${liqLine(o.gt)} <span class="muted">(게이트)</span></div>` : ''}
       <div class="tblwrap"><table class="md" style="margin-top:6px"><thead><tr><th></th><th>OKX</th><th>바이낸스</th><th>바이비트</th></tr></thead><tbody>
         <tr><td>미결제약정</td><td>${k.oiUsd ? money(k.oiUsd) : '-'}</td><td>${b.oiUsd ? money(b.oiUsd) : '-'}</td><td>${y.oiUsd ? money(y.oiUsd) : '-'}</td></tr>
         <tr><td>펀딩비</td><td>${fr(k.funding)}</td><td>${fr(b.funding)}</td><td>${fr(y.funding)}</td></tr>
@@ -424,7 +451,8 @@ async function viewFut() {
       ${fHot || lsWarn ? `<div style="font-size:12px;margin-top:4px;color:#B26B00">${fHot ? '⚠️ 펀딩비가 커서 한쪽이 과열 ' : ''}${lsWarn ? `⚠️ 롱/숏 ${lsMax.map((v) => v.toFixed(2)).join('·')}로 한쪽 쏠림` : ''}</div>` : ''}
       <a class="btn small" href="#/c/${o.s}" style="margin-top:6px">📈 차트</a></div>`;
   }).join('');
-  $('#fut').innerHTML = rows + `<div class="muted" style="font-size:12px;text-align:center">${kTime(D.at)} 기준 · 3분마다 새로 받음 · OKX 통계(롱숏 등)는 브라우저에서 막혀 바이낸스·바이비트 것으로 표시</div>`;
+  const OK = FUT_SYMS.map((s) => D.rows[s]).filter(Boolean);
+  $('#fut').innerHTML = (OK.length ? covCard(OK) : '') + rows + `<div class="muted" style="font-size:12px;text-align:center">${kTime(D.at)} 기준 · 3분마다 새로 받음 · OKX 통계(롱숏 등)는 브라우저에서 막혀 바이낸스·바이비트 것으로 표시</div>`;
 }
 
 /* ═════════ 🔔 신호(QQQ 규칙 신호 + 디스코드 알림) ═════════ */
