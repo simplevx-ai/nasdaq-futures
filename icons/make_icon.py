@@ -1,4 +1,4 @@
-"""나스닥 선물 앱 아이콘 — 짙은 남색→보라 그라데이션, 캔들 + 오른쪽 매물대 막대, 아래 '나스닥 선물'.
+"""선물 스캐너 앱 아이콘 — 짙은 남색→보라 그라데이션, 캔들 + 오른쪽 매물대 막대, 아래 '선물 스캐너'.
 사용: python make_icon.py OUT_DIR"""
 import sys
 from PIL import Image, ImageDraw, ImageFont
@@ -33,7 +33,7 @@ def draw(S, maskable):
         d.line([(X(x), X(hi)), (X(x), X(lo))], fill=col, width=max(2, int(1.6 * u)))
         d.rounded_rectangle([X(x - 3.4), X(min(op, cl)), X(x + 3.4), X(max(op, cl))], radius=1.2 * u, fill=col)
     f = ImageFont.truetype(FONT, int(13 * u))
-    d.text((S / 2, o + 84 * u), '나스닥 선물', font=f, fill=(255, 255, 255), anchor='mm')
+    d.text((S / 2, o + 84 * u), '선물 스캐너', font=f, fill=(255, 255, 255), anchor='mm')
     if not maskable:
         m = Image.new('L', (S, S), 0)
         ImageDraw.Draw(m).rounded_rectangle([0, 0, S - 1, S - 1], radius=int(S * 0.225), fill=255)

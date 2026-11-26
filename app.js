@@ -1,11 +1,11 @@
-/* 나스닥 선물 — OKX·바이낸스 나스닥·S&P·반도체 ETF 무기한 선물 분석 앱 (공부용, 자동 주문 없음)
+/* 선물 스캐너 — OKX·바이낸스 나스닥·S&P·반도체 ETF 무기한 선물 분석 앱 (공부용, 자동 주문 없음)
  * 화면: 📊 스캐너 · 📈 차트(매물대) · 🧭 선물 지표 · 🔔 신호 · 🧮 도구
  * 시세: OKX·바이낸스·바이비트 공개 API(키 없음). 디스코드 알림은 '가격 위치' 앱과 같은 구글 Apps Script를 씀.
  * 계산 파일: scan.js(스캐너) · levels.js(매물대·지지/저항) · nq.js(QQQ 규칙 신호)
  */
 'use strict';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.3.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -154,7 +154,7 @@ const SORTS = { up: '🔼 반등 포착', dn: '🔽 하락 전환 포착', stron
 const HIGHER = { '15m': '1H', '30m': '4H', '1H': '4H', '4H': '1D', '1D': null };
 const SETS = { top: '자동 상위 20', core: '핵심(나스닥·S&P·반도체)', nasdaq: '나스닥100', sp500: 'S&P500', semi: '반도체', single: '개별주 레버리지', other: '기타 ETF' };
 async function viewScan() {
-  setTitle('📊 ETF 선물 스캐너');
+  setTitle('📊 선물 스캐너');
   const prefs = await KV.get('scanPrefs', { set: 'top', tf: '1H', sort: 'up' }); prefs.tf = fixTf(prefs.tf);
   view().innerHTML = `<div class="card warnlist" style="margin-top:0;font-size:13px">${DISC}</div>
     <div class="chips">${Object.entries(SETS).map(([k, v]) => `<button class="chip${prefs.set === k ? ' on' : ''}" data-set="${k}" type="button">${v}</button>`).join('')}</div>
@@ -276,7 +276,7 @@ async function viewChart(sym) {
       <h4>⬆️ 위쪽 저항</h4><ul class="lvl">${L.res.map((x) => lvRow(x, 'res')).join('') || '<li class="muted">위쪽에 뚜렷한 저항 없음</li>'}</ul>
       <h4>⬇️ 아래쪽 지지</h4><ul class="lvl">${L.sup.map((x) => lvRow(x, 'sup')).join('') || '<li class="muted">아래쪽에 뚜렷한 지지 없음</li>'}</ul>
       ${zoneBox(bz, 'buy')}${zoneBox(sz, 'sell')}
-      <a class="btn small" id="toCalc" href="#/t" style="margin-top:8px">🧮 매수 검토 가격대로 위험 계산</a></div>
+      <a class="btn small" id="toCalc" href="#/t" style="margin-top:8px">🧮 매수 검토 가격대로 청산가 계산</a></div>
     <div class="card"><h2>반등·하락 전환 조건 <span class="muted">(${TF[prefs.tf].label})</span></h2>
       <h4>🔼 반등 ${a.upScore}/5</h4><ul class="checks">${a.up.map((c) => `<li>${c.ok ? '✅' : '⬜'} ${esc(c.name)}</li>`).join('')}</ul>
       <h4>🔽 하락 전환 ${a.dnScore}/5</h4><ul class="checks">${a.dn.map((c) => `<li>${c.ok ? '✅' : '⬜'} ${esc(c.name)}</li>`).join('')}</ul>
@@ -427,12 +427,12 @@ async function viewSignals() {
   if (await relayOn()) relay('ping').then(async (d) => { if (d.scan) { const cb = $('#scAl'); if (cb) cb.checked = !!d.scan.enabled; await KV.set('scAlert', { enabled: !!d.scan.enabled }); } }).catch(() => {});
 }
 
-/* ═════════ 🧮 도구(위험 계산기·연결 설정) ═════════ */
+/* ═════════ 🧮 도구(청산가 계산기·연결 설정) ═════════ */
 async function viewTools() {
   setTitle('🧮 도구');
   const cfg = await KV.get('relay', {}), pre = await KV.get('calcPrefill', null), cp = await KV.get('calc', { acct: 1000, risk: 1, lev: 3, side: 'long', rr: 2, mmr: 0.5 });
   if (pre) { cp.entry = +pre.entry.toFixed(2); cp.stop = +pre.stop.toFixed(2); cp.sym = pre.sym; cp.side = 'long'; if (pre.rr) cp.rr = pre.rr; await KV.set('calcPrefill', null); }
-  view().innerHTML = `<div class="card" style="margin-top:0"><h2>🧮 위험 계산기 <span class="muted">${cp.sym ? '(' + esc(cp.sym) + ' 차트에서 가져옴)' : ''}</span></h2>
+  view().innerHTML = `<div class="card" style="margin-top:0"><h2>🧮 청산가 계산기 <span class="muted">${cp.sym ? '(' + esc(cp.sym) + ' 차트에서 가져옴)' : ''}</span></h2>
       <div class="calcintro">💡 <b>이렇게 씁니다</b>: "이번 거래가 틀리면 <b>최대 얼마까지 잃어도 되는지</b>"를 먼저 정하면, 손절가까지 거리를 보고 <b>몇 주(계약)를 사야 하는지</b> 거꾸로 계산해 줍니다. 손절가에 닿아도 정한 금액만 잃도록 수량을 맞추는 방법입니다.</div>
       <div class="seg" style="margin-top:8px"><label><input type="radio" name="side" value="long"${cp.side !== 'short' ? ' checked' : ''}><span>📈 롱 (오르면 이익)</span></label><label><input type="radio" name="side" value="short"${cp.side === 'short' ? ' checked' : ''}><span>📉 숏 (내리면 이익)</span></label></div>
       <div class="calcgrid">
@@ -455,7 +455,7 @@ async function viewTools() {
       <label for="r_url">스크립트 웹 앱 주소</label><input id="r_url" value="${esc(cfg.url || '')}" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
       <label for="r_key">앱 키 (APP_KEY)</label><input id="r_key" type="password" value="${esc(cfg.key || '')}" autocomplete="off">
       <button class="btn primary block" id="r_save" type="button" style="margin-top:10px">저장하고 연결 확인</button><div id="r_res" style="margin-top:8px"></div></div>
-    <div class="card"><h2>앱 정보</h2><div class="muted" style="font-size:13px">나스닥 선물 v${APP_VERSION} · OKX·바이낸스 공개 시세(키·주문 없음) · 홈 화면에 추가: 크롬 ⋮ → '홈 화면에 추가'<br>계산: 스캐너·QQQ 규칙 신호는 '가격 위치' 앱과 같은 식, 매물대는 최근 200봉 거래량 분포.</div></div>
+    <div class="card"><h2>앱 정보</h2><div class="muted" style="font-size:13px">선물 스캐너 v${APP_VERSION} · OKX·바이낸스 공개 시세(키·주문 없음) · 홈 화면에 추가: 크롬 ⋮ → '홈 화면에 추가'<br>계산: 스캐너·QQQ 규칙 신호는 '가격 위치' 앱과 같은 식, 매물대는 최근 200봉 거래량 분포.</div></div>
     <div class="disc">${DISC}</div>`;
   const calc = async () => {
     const v = (id) => parseFloat($('#' + id).value), side = $('[name=side]:checked').value;
