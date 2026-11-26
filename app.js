@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -115,8 +115,9 @@ const DISC = '📘 정해진 조건으로 계산한 공부용 정보입니다. �
 const scChip = (label, s) => `<span class="scchip s${Math.min(s, 4)}">${label} ${s}/5 ${SCAN.strength(s)}</span>`;
 
 /* ═════════ 📊 스캐너 ═════════ */
-const SORTS = { up: '🔼 반등 포착', dn: '🔽 하락 전환 포착', spike: '📢 거래량 급증', atr: '🌊 변동성', vol: '💰 거래대금' };
-const SETS = { top: '거래대금 상위 20', core: '핵심(나스닥·S&P·반도체)', nasdaq: '나스닥100', sp500: 'S&P500', semi: '반도체', single: '개별주 레버리지', other: '기타 ETF' };
+const SORTS = { up: '🔼 반등 포착', dn: '🔽 하락 전환 포착', strong: '⭐ 강한 신호', spike: '📢 거래량 급증', atr: '🌊 변동성' };
+const HIGHER = { '5m': '15m', '15m': '1H', '1H': '4H', '4H': '1D', '1D': null };
+const SETS = { top: '자동 상위 20', core: '핵심(나스닥·S&P·반도체)', nasdaq: '나스닥100', sp500: 'S&P500', semi: '반도체', single: '개별주 레버리지', other: '기타 ETF' };
 async function viewScan() {
   setTitle('📊 ETF 선물 스캐너');
   const prefs = await KV.get('scanPrefs', { set: 'top', tf: '1H', sort: 'up' });
@@ -131,7 +132,9 @@ async function viewScan() {
       <b>🔽 하락 전환 포착(0~5)</b>: RSI가 최근 60 이상에서 다시 내림 · MACD 히스토그램 양→음 또는 2봉 연속 악화 · 종가가 EMA5 아래 · 거래량 1.3배 이상 음봉 · 고점이 낮아짐.<br>
       <b>📢 거래량 급증</b>: 마지막으로 끝난 봉의 거래량 ÷ 그 전 20봉 평균. 2배 이상이면 급증. 양봉·음봉과 함께 봐야 합니다.<br>
       <b>🌊 변동성</b>: 일봉 ATR(14)÷가격. 10%↑ 초고변동, 5~10% 고변동, 2~5% 중간, 2% 미만 낮음.<br>
-      데이터는 OKX에 있으면 OKX, 없거나 봉이 모자라면 바이낸스. 거래대금은 두 거래소 합.</div></details></div>
+      <b>⭐ 강한 신호</b>: 기본 점수가 4 이상이고, 아래 5가지 확인 중 3가지 이상이 맞을 때만. 매수: 상위 봉(예: 1시간봉이면 4시간봉)도 반등 점수 3 이상 · 지지 가격 위 1 ATR 안 · VWAP 위 · 최근 3봉에 거래량 1.5배 이상 양봉 · RSI 강세 다이버전스. 매도는 그 반대.<br>
+      <b>📍 매수(매도) 검토 가격대</b>: 현재가 아래(위) 1.5 ATR 안의 지지(저항) 주변, 근거 2개 이상 겹친 곳 우선. 무효(손절) 가격 = 가격대 밖 1 ATR, 1차 목표 = 가장 가까운 저항(지지).<br>
+      '자동 상위 20'은 OKX·바이낸스에서 거래가 가장 많은 ETF 선물 20개를 자동으로 고릅니다. 데이터는 OKX에 있으면 OKX, 없거나 봉이 모자라면 바이낸스.</div></details></div>
     <div class="disc">OKX·바이낸스 공개 시세 · 자동 주문 없음 · v${APP_VERSION}</div>`;
   view().querySelectorAll('[data-set]').forEach((b) => { b.onclick = async () => { prefs.set = b.dataset.set; await KV.set('scanPrefs', prefs); viewScan(); }; });
   view().querySelectorAll('[name=tf]').forEach((r) => { r.onchange = async () => { prefs.tf = r.value; await KV.set('scanPrefs', prefs); viewScan(); }; });
@@ -146,20 +149,25 @@ async function viewScan() {
   const R = await pool(syms, 4, async (s) => {
     const A = await candles(s, prefs.tf, T), a = SCAN.analyze(A.cs, { dayStart: dayStartUtc(), daily: prefs.tf === '1D' });
     const d = prefs.tf === '1D' ? a : SCAN.analyze((await candles(s, '1D', T)).cs, { daily: true });
+    const htf = HIGHER[prefs.tf], hi = !htf ? null : htf === '1D' ? d : SCAN.analyze((await candles(s, htf, T)).cs, { dayStart: dayStartUtc() });
+    let lv = null, bz = null, sz = null, st = null;
+    if (!a.error) { lv = LV.levels(A.cs, a.atr); bz = LV.buyZone(lv, a); sz = LV.sellZone(lv, a); st = LV.strong(A.cs, a, hi && !hi.error ? hi : null, lv, SCAN.rsiSeries(A.cs.map((k) => k.c))); }
     done++; const el = $('#list .muted'); if (el) el.textContent = `분석 중… ${done}/${syms.length}`;
-    return { s, src: A.src, a, d: d && !d.error ? d : null, tk: T.t[s] };
+    return { s, src: A.src, a, d: d && !d.error ? d : null, tk: T.t[s], hiTf: htf, bz, sz, st };
   });
   const rows = R.filter((x) => x && !x.error && x.a && !x.a.error);
   function drawList() {
-    const key = { up: (x) => x.a.upScore * 10 - x.a.dnScore, dn: (x) => x.a.dnScore * 10 - x.a.upScore, spike: (x) => x.a.volRatio || 0, atr: (x) => (x.d && x.d.atrPct) || 0, vol: (x) => x.tk.vol }[prefs.sort];
-    const L = rows.slice().sort((p, q) => key(q) - key(p));
+    const key = { up: (x) => x.a.upScore * 10 + (x.st ? x.st.nb : 0) - x.a.dnScore, dn: (x) => x.a.dnScore * 10 + (x.st ? x.st.ns : 0) - x.a.upScore, strong: (x) => (x.st ? Math.max(x.st.strongBuy ? x.st.nb : 0, x.st.strongSell ? x.st.ns : 0) : 0), spike: (x) => x.a.volRatio || 0, atr: (x) => (x.d && x.d.atrPct) || 0 }[prefs.sort] || ((x) => x.a.upScore);
+    let L = rows.slice().sort((p, q) => key(q) - key(p));
+    if (prefs.sort === 'strong') L = L.filter((x) => x.st && (x.st.strongBuy || x.st.strongSell));
     let head = '';
     if (prefs.sort === 'atr') {
       const by = (c) => L.filter((x) => x.d && SCAN.volClass(x.d.atrPct) === c).map((x) => x.s).join(', ') || '없음';
       head = `<div class="muted" style="font-size:13px;margin-bottom:8px">초고변동: ${by('초고변동')}<br>고변동: ${by('고변동')}<br>중간: ${by('중간')}<br>낮음(안정적): ${by('낮음')}</div>`;
     }
+    if (prefs.sort === 'strong') head = `<div class="muted" style="font-size:13px;margin-bottom:8px">기본 점수 4 이상 + 추가 확인 5가지 중 3가지 이상인 종목만 보여 줍니다.${L.length ? '' : '<br><b>지금은 강한 신호가 없습니다.</b> 확인이 덜 된 신호는 반등·하락 전환 목록에서 보세요.'}</div>`;
     if (prefs.sort === 'spike') head = `<div class="muted" style="font-size:13px;margin-bottom:8px">2배 이상 급증: ${L.filter((x) => x.a.volRatio >= 2).map((x) => `${x.s} ${x.a.volRatio.toFixed(1)}배(${x.a.price >= x.a.open ? '양봉' : '음봉'})`).join(', ') || '없음'}</div>`;
-    $('#list').innerHTML = `<div class="card"><h2>${SORTS[prefs.sort]} <span class="muted">(${L.length}종목 · ${TF[prefs.tf].label})</span></h2>${head}${L.map((x, i) => scanRow(x, i)).join('') || '<div class="muted">종목이 없습니다.</div>'}</div>`;
+    $('#list').innerHTML = `<div class="card"><h2>${SORTS[prefs.sort] || ''} <span class="muted">(${L.length}종목 · ${TF[prefs.tf].label})</span></h2>${head}${L.map((x, i) => scanRow(x, i, prefs.sort)).join('') || (prefs.sort === 'strong' ? '' : '<div class="muted">종목이 없습니다.</div>')}</div>`;
   }
   drawList();
   const mk = await pool(['QQQ', 'SPY'], 2, async (s) => ({ s, d: SCAN.analyze((await candles(s, '1D', T)).cs, { daily: true }) }));
@@ -168,21 +176,30 @@ async function viewScan() {
     ${mk.map((x) => x.d && !x.d.error ? `<div style="font-size:14px;margin:4px 0"><b>${x.s}</b> ${fmt(x.d.price)} · RSI ${x.d.rsi.toFixed(1)} · <span class="${x.d.trend === 'up' ? 'up' : x.d.trend === 'down' ? 'down' : ''}">${esc(SCAN.dayTrend(x.d))}</span></div>` : '').join('')}
     <div class="muted" style="font-size:12px">${!T.okxOk ? '⚠️ OKX 시세 못 받음 · ' : ''}${!T.bnOk ? '⚠️ 바이낸스 시세 못 받음 · ' : ''}${kTime(Date.now())} · 뉴욕 ${ses.ny}</div>`;
 }
-function scanRow(x, i) {
-  const m = SCAN.META[x.s], a = x.a, d = x.d, tk = x.tk, px = tk.px;
-  const ex = [tk.okx ? `OKX ${money(tk.okx.vol)}` : '', tk.bn ? `바이낸스 ${money(tk.bn.vol)}` : ''].filter(Boolean).join(' · ');
+function zoneBox(z, kind) {
+  if (!z) return '';
+  const buy = kind === 'buy';
+  return `<div class="zonebox ${buy ? 'zb' : 'zs'}"><b>📍 ${buy ? '매수' : '매도(숏)'} 검토 가격대 ${fmt(z.low)} ~ ${fmt(z.high)}</b> <span class="muted">(${z.inZone ? '지금 가격대 안' : '현재가 대비 ' + pct(z.dist)})</span>${z.star ? ' ★' : ''}<br><span style="font-size:12px">무효(손절) <b>${fmt(z.stop)}</b> · 1차 목표 <b>${fmt(z.target)}</b> · 손익비 1:${z.rr > 0 ? z.rr.toFixed(1) : '-'} · 근거: ${z.basis.map(esc).join('·')}${z.rr < 1 ? '<br><span style="color:#B26B00">⚠️ 손익비 1 미만 — 목표가가 가까워 들어갈 만한 자리가 아닐 수 있음</span>' : ''}</span></div>`;
+}
+function scanRow(x, i, sort) {
+  const m = SCAN.META[x.s], a = x.a, d = x.d, tk = x.tk, px = tk.px, st = x.st;
+  const showBuy = a.upScore >= 3 || sort === 'up' || (st && st.strongBuy), showSell = a.dnScore >= 3 || sort === 'dn' || (st && st.strongSell);
+  const badge = st && st.strongBuy ? `<span class="scchip sbuy">🟢 강한 매수 신호 · 확인 ${st.nb}/5</span>` : st && st.strongSell ? `<span class="scchip ssell">🔴 강한 매도 신호 · 확인 ${st.ns}/5</span>` : '';
   const warn = [d && d.atrJump >= 1.5 ? `⚠️ 변동성 확대(ATR ${d.atrJump.toFixed(1)}배)` : '', a.volRatio >= 2 ? `📢 거래량 ${a.volRatio.toFixed(1)}배(${a.price >= a.open ? '양봉' : '음봉'})` : ''].filter(Boolean).join(' · ');
   const ck = (L) => `<ul class="checks">${L.map((c) => `<li>${c.ok ? '✅' : '⬜'} ${esc(c.name)}</li>`).join('')}</ul>`;
   return `<details class="scrow"><summary>
       <div class="row spread"><span><b>${i + 1}. ${x.s}</b> <span class="muted" style="font-size:12px">${esc(m.name)}</span>${m.lev < 0 ? ' <span class="levtag inv">인버스</span>' : ''}</span><span class="${px.chg > 0 ? 'up' : px.chg < 0 ? 'down' : ''}" style="font-size:13px">${fmt(px.last)} ${pct(px.chg)}</span></div>
       <div class="row wrap" style="gap:4px;margin-top:4px">${scChip('🔼반등', a.upScore)}${scChip('🔽하락전환', a.dnScore)}<span class="scchip">거래량 ${a.volRatio != null ? a.volRatio.toFixed(1) + '배' : '-'}</span><span class="scchip">${SCAN.volClass(d && d.atrPct)} ${d && d.atrPct ? d.atrPct.toFixed(1) + '%' : ''}</span>${d ? `<span class="scchip ${d.trend === 'up' ? 'tup' : d.trend === 'down' ? 'tdn' : ''}">일봉 ${d.trend === 'up' ? '상승' : d.trend === 'down' ? '하락' : '횡보'}</span>` : ''}</div>
       ${warn ? `<div style="font-size:12px;margin-top:3px;color:#B26B00">${warn}</div>` : ''}
-      <div class="muted" style="font-size:11px;margin-top:3px">${ex}</div></summary>
+      ${badge ? `<div style="margin-top:4px">${badge}</div>` : ''}
+      ${showBuy && x.bz && (sort !== 'dn') ? zoneBox(x.bz, 'buy') : ''}${showSell && x.sz && (sort === 'dn' || (st && st.strongSell)) ? zoneBox(x.sz, 'sell') : ''}</summary>
     <div class="grid2" style="font-size:13px;margin-top:8px">
       <div>RSI(14) <b>${a.rsi != null ? a.rsi.toFixed(1) : '-'}</b></div><div>MACD 히스토그램 <b>${a.hist != null ? a.hist.toFixed(3) : '-'}</b></div>
       <div>ADX <b>${a.adx != null ? a.adx.toFixed(0) : '-'}</b></div><div>VWAP 대비 <b class="${a.vwapGap > 0 ? 'up' : 'down'}">${pct(a.vwapGap)}</b></div></div>
     ${d ? `<div class="muted" style="font-size:12px;margin-top:4px">일봉: ${esc(SCAN.dayTrend(d))} · RSI ${d.rsi.toFixed(1)}</div>` : ''}
     <h4>🔼 반등 조건 ${a.upScore}/5</h4>${ck(a.up)}<h4>🔽 하락 전환 조건 ${a.dnScore}/5</h4>${ck(a.dn)}
+    ${st ? `<h4>⭐ 강한 매수 확인 ${st.nb}/5 <span class="muted">(상위 봉 ${x.hiTf ? TF[x.hiTf].label : '없음'})</span></h4>${ck(st.buy)}<h4>⭐ 강한 매도 확인 ${st.ns}/5</h4>${ck(st.sell)}<div class="muted" style="font-size:12px">기본 점수 4 이상 + 확인 3가지 이상이면 '강한 신호'입니다.</div>` : ''}
+    ${x.bz && !(showBuy && sort !== 'dn') ? zoneBox(x.bz, 'buy') : ''}${x.sz && !(showSell && (sort === 'dn' || (st && st.strongSell))) ? zoneBox(x.sz, 'sell') : ''}
     ${d && d.trend === 'down' && a.upScore >= 3 ? '<div class="warnlist" style="font-size:12px">일봉은 하락 추세입니다. 지금 반등 점수는 추세를 거스르는 단기 반등이라 실패할 가능성도 큽니다.</div>' : ''}
     ${d && d.trend === 'up' && a.dnScore >= 3 ? '<div class="warnlist" style="font-size:12px">일봉은 상승 추세입니다. 지금 하락 전환 점수는 눌림일 수도 있습니다.</div>' : ''}
     ${m.pair ? `<div class="muted" style="font-size:12px;margin-top:4px">반대 상품: ${m.pair}</div>` : ''}
@@ -209,7 +226,7 @@ async function viewChart(sym) {
   let A; try { A = await candles(sym, prefs.tf, T); } catch (e) { $('#sum').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
   const cs = A.cs, a = SCAN.analyze(cs, { dayStart: dayStartUtc(), daily: prefs.tf === '1D' });
   if (a.error) { $('#sum').innerHTML = `<div class="card errbox">${esc(a.error)}</div>`; return; }
-  const L = LV.levels(cs, a.atr);
+  const L = LV.levels(cs, a.atr), bz = LV.buyZone(L, a), sz = LV.sellZone(L, a);
   drawChart($('#cv'), cs, L.vp, a);
   const lvRow = (x, kind) => `<li><b class="${kind === 'res' ? 'up' : 'down'}">${fmt(x.p)}</b> <span class="muted">(${pct(x.dist)})</span> ${x.labels.map(esc).join(' · ')}${x.n >= 2 ? ' <b>★</b>' : ''}</li>`;
   const vp = L.vp, d = a, px = T.t[sym].px;
@@ -223,13 +240,14 @@ async function viewChart(sym) {
     <div class="card"><h2>지지·저항 <span class="muted">(★ 근거 2개 이상 겹침)</span></h2>
       <h4>⬆️ 위쪽 저항</h4><ul class="lvl">${L.res.map((x) => lvRow(x, 'res')).join('') || '<li class="muted">위쪽에 뚜렷한 저항 없음</li>'}</ul>
       <h4>⬇️ 아래쪽 지지</h4><ul class="lvl">${L.sup.map((x) => lvRow(x, 'sup')).join('') || '<li class="muted">아래쪽에 뚜렷한 지지 없음</li>'}</ul>
-      <a class="btn small" id="toCalc" href="#/t" style="margin-top:6px">🧮 이 가격으로 위험 계산</a></div>
+      ${zoneBox(bz, 'buy')}${zoneBox(sz, 'sell')}
+      <a class="btn small" id="toCalc" href="#/t" style="margin-top:8px">🧮 매수 검토 가격대로 위험 계산</a></div>
     <div class="card"><h2>반등·하락 전환 조건 <span class="muted">(${TF[prefs.tf].label})</span></h2>
       <h4>🔼 반등 ${a.upScore}/5</h4><ul class="checks">${a.up.map((c) => `<li>${c.ok ? '✅' : '⬜'} ${esc(c.name)}</li>`).join('')}</ul>
       <h4>🔽 하락 전환 ${a.dnScore}/5</h4><ul class="checks">${a.dn.map((c) => `<li>${c.ok ? '✅' : '⬜'} ${esc(c.name)}</li>`).join('')}</ul>
       <div class="muted" style="font-size:12px">EMA5 ${fmt(d.ema5)} · EMA20 ${fmt(d.ema20)} · EMA50 ${fmt(d.ema50)}${d.ema200 ? ' · EMA200 ' + fmt(d.ema200) : ''} · VWAP ${fmt(d.vwap)} · ADX ${d.adx ? d.adx.toFixed(0) : '-'}</div></div>
     <div class="disc">${DISC}</div>`;
-  $('#toCalc').onclick = async () => { const sup = L.sup[0]; await KV.set('calcPrefill', { sym, entry: px.last, stop: sup ? sup.p - a.atr * 0.25 : px.last - 2 * a.atr, atr: a.atr }); };
+  $('#toCalc').onclick = async () => { await KV.set('calcPrefill', bz ? { sym, entry: (bz.low + bz.high) / 2, stop: bz.stop, rr: bz.rr > 0 ? +bz.rr.toFixed(1) : 2, atr: a.atr } : { sym, entry: px.last, stop: px.last - 2 * a.atr, atr: a.atr }); };
 }
 function drawChart(cv, all, vp, a) {
   const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
@@ -368,7 +386,7 @@ async function viewSignals() {
 async function viewTools() {
   setTitle('🧮 도구');
   const cfg = await KV.get('relay', {}), pre = await KV.get('calcPrefill', null), cp = await KV.get('calc', { acct: 1000, risk: 1, lev: 3, side: 'long', rr: 2, mmr: 0.5 });
-  if (pre) { cp.entry = +pre.entry.toFixed(2); cp.stop = +pre.stop.toFixed(2); cp.sym = pre.sym; await KV.set('calcPrefill', null); }
+  if (pre) { cp.entry = +pre.entry.toFixed(2); cp.stop = +pre.stop.toFixed(2); cp.sym = pre.sym; cp.side = 'long'; if (pre.rr) cp.rr = pre.rr; await KV.set('calcPrefill', null); }
   view().innerHTML = `<div class="card" style="margin-top:0"><h2>🧮 위험 계산기 <span class="muted">${cp.sym ? '(' + esc(cp.sym) + '에서 가져옴)' : ''}</span></h2>
       <div class="muted" style="font-size:13px">한 번에 잃어도 되는 금액을 먼저 정하고, 손절가까지의 거리로 수량을 거꾸로 계산합니다.</div>
       <div class="seg" style="margin-top:8px"><label><input type="radio" name="side" value="long"${cp.side !== 'short' ? ' checked' : ''}><span>롱(오름에 베팅)</span></label><label><input type="radio" name="side" value="short"${cp.side === 'short' ? ' checked' : ''}><span>숏(내림에 베팅)</span></label></div>

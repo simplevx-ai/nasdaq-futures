@@ -63,5 +63,56 @@ const LV = (() => {
     const inLvn = vp ? vp.lvn.some((x) => Math.abs(x - p) <= vp.step) : false;
     return { price: p, vp, sup, res, where, inLvn };
   }
-  return { profile, swings, levels };
+  // 매수 검토 가격대(반등 쪽): 현재가 아래 1.5 ATR 안의 지지(근거 2개 이상 우선) 주변. 무효(손절) = 가격대 아래 1 ATR, 1차 목표 = 가장 가까운 저항
+  function buyZone(lv, a) {
+    const A = a.atr, p = a.price; if (!A || !lv) return null;
+    const near = lv.sup.filter((s) => p - s.p <= 1.5 * A);
+    const pick = near.find((s) => s.n >= 2) || near[0] || lv.sup[0]; if (!pick) return null;
+    const low = pick.p - 0.25 * A, high = Math.min(p, pick.p + 0.5 * A), stop = low - A;
+    const mid = (low + high) / 2, target = lv.res[0] ? lv.res[0].p : mid + 2 * (mid - stop);
+    return { low, high, stop, target, rr: (target - mid) / (mid - stop), basis: pick.labels, star: pick.n >= 2, inZone: p >= low && p <= high * 1.001, dist: ((high / p) - 1) * 100 };
+  }
+  // 매도(숏) 검토 가격대(하락 전환 쪽): 현재가 위 1.5 ATR 안의 저항 주변. 무효 = 가격대 위 1 ATR, 1차 목표 = 가장 가까운 지지
+  function sellZone(lv, a) {
+    const A = a.atr, p = a.price; if (!A || !lv) return null;
+    const near = lv.res.filter((s) => s.p - p <= 1.5 * A);
+    const pick = near.find((s) => s.n >= 2) || near[0] || lv.res[0]; if (!pick) return null;
+    const high = pick.p + 0.25 * A, low = Math.max(p, pick.p - 0.5 * A), stop = high + A;
+    const mid = (low + high) / 2, target = lv.sup[0] ? lv.sup[0].p : mid - 2 * (stop - mid);
+    return { low, high, stop, target, rr: (mid - target) / (stop - mid), basis: pick.labels, star: pick.n >= 2, inZone: p <= high && p >= low * 0.999, dist: ((low / p) - 1) * 100 };
+  }
+  // RSI 다이버전스(최근 40봉, 좌우 3봉 기준 스윙): 강세 = 가격 저점은 낮아졌는데 RSI 저점은 높아짐 / 약세 = 그 반대(고점)
+  function divergence(cs, rsiArr) {
+    const n = cs.length, from = Math.max(3, n - 40), lows = [], highs = [];
+    for (let i = from; i < n - 3; i++) {
+      let lo = true, hi = true;
+      for (let k = i - 3; k <= i + 3; k++) { if (k === i) continue; if (cs[k].l < cs[i].l) lo = false; if (cs[k].h > cs[i].h) hi = false; }
+      if (lo && rsiArr[i] != null) lows.push(i); if (hi && rsiArr[i] != null) highs.push(i);
+    }
+    const bull = lows.length >= 2 && (() => { const a = lows[lows.length - 2], b = lows[lows.length - 1]; return cs[b].l < cs[a].l && rsiArr[b] > rsiArr[a] + 1 && n - 1 - b <= 12; })();
+    const bear = highs.length >= 2 && (() => { const a = highs[highs.length - 2], b = highs[highs.length - 1]; return cs[b].h > cs[a].h && rsiArr[b] < rsiArr[a] - 1 && n - 1 - b <= 12; })();
+    return { bull, bear };
+  }
+  // 강한 신호 확인(기본 점수 4 이상일 때 추가로 5가지를 더 봄 → 3가지 이상이면 '강한 신호')
+  function strong(cs, a, hi, lv, rsiArr) {
+    const A = a.atr, p = a.price, last3 = cs.slice(-3), avg = cs.slice(-23, -3).reduce((s, k) => s + k.v, 0) / 20;
+    const dv = divergence(cs, rsiArr);
+    const buy = [
+      { name: '상위 봉도 반등 쪽(상위 봉 반등 점수 3 이상)', ok: !!(hi && !hi.error && hi.upScore >= 3) },
+      { name: '지지 근처(지지 가격 위 1 ATR 안)', ok: !!(lv && lv.sup[0] && p - lv.sup[0].p <= A) },
+      { name: '그날 평균 거래가격(VWAP) 위', ok: a.vwapGap != null && a.vwapGap > 0 },
+      { name: '최근 3봉 안에 거래량 1.5배 이상 양봉', ok: avg > 0 && last3.some((k) => k.v >= avg * 1.5 && k.c > k.o) },
+      { name: 'RSI 강세 다이버전스(가격 저점↓·RSI 저점↑)', ok: dv.bull },
+    ];
+    const sell = [
+      { name: '상위 봉도 하락 전환 쪽(상위 봉 하락 전환 점수 3 이상)', ok: !!(hi && !hi.error && hi.dnScore >= 3) },
+      { name: '저항 근처(저항 가격 아래 1 ATR 안)', ok: !!(lv && lv.res[0] && lv.res[0].p - p <= A) },
+      { name: '그날 평균 거래가격(VWAP) 아래', ok: a.vwapGap != null && a.vwapGap < 0 },
+      { name: '최근 3봉 안에 거래량 1.5배 이상 음봉', ok: avg > 0 && last3.some((k) => k.v >= avg * 1.5 && k.c < k.o) },
+      { name: 'RSI 약세 다이버전스(가격 고점↑·RSI 고점↓)', ok: dv.bear },
+    ];
+    const nb = buy.filter((x) => x.ok).length, ns = sell.filter((x) => x.ok).length;
+    return { buy, sell, nb, ns, strongBuy: a.upScore >= 4 && nb >= 3, strongSell: a.dnScore >= 4 && ns >= 3 };
+  }
+  return { profile, swings, levels, buyZone, sellZone, divergence, strong };
 })();

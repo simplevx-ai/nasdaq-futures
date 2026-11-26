@@ -233,3 +233,10 @@ a.chip { text-decoration: none; }
 :root { --navy: #0C1434; }
 ul.lvl { list-style: none; padding: 0; margin: 4px 0 8px; font-size: 14px; } ul.lvl li { padding: 4px 0; border-bottom: 1px solid var(--line); }
 .tabs a { font-size: 11px; }
+
+.zonebox { margin-top: 6px; border-radius: 10px; padding: 7px 9px; font-size: 13px; line-height: 1.45; }
+.zonebox.zb { background: rgba(31,157,99,.10); border: 1px solid rgba(31,157,99,.45); }
+.zonebox.zs { background: rgba(47,111,224,.10); border: 1px solid rgba(47,111,224,.45); }
+.scchip.sbuy { background: #E3F6EC; color: #0E6B3F; border-color: #8FD3AE; font-weight: 700; font-size: 12px; }
+.scchip.ssell { background: #E4ECFC; color: #1C4FB0; border-color: #9DB8EE; font-weight: 700; font-size: 12px; }
+@media (prefers-color-scheme: dark) { .scchip.sbuy { background: #12392A; color: #9BE7C2; border-color: #2C6E50; } .scchip.ssell { background: #172B52; color: #AFC6F5; border-color: #2E4E8C; } }
