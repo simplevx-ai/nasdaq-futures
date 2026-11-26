@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -354,7 +354,7 @@ async function futData() {
       const id = s + '-USDT-SWAP', x = { };
       const oiRow = oi.status === 'fulfilled' ? oi.value.find((r) => r.instId === id) : null; if (oiRow) x.oiUsd = +oiRow.oiUsd;
       const mk = mark.status === 'fulfilled' ? mark.value.find((r) => r.instId === id) : null; if (mk) x.mark = +mk.markPx;
-      try { const f = (await okxQ(`/public/funding-rate?instId=${id}`))[0]; x.funding = +f.fundingRate; x.next = +f.nextFundingTime; } catch { /* 없음 */ }
+      try { const f = (await okxQ(`/public/funding-rate?instId=${id}`))[0]; x.funding = +f.fundingRate; x.next = +f.fundingTime; } catch { /* 없음 */ }
       try { const ix = (await okxQ(`/market/index-tickers?instId=${s}-USDT`))[0]; if (ix) x.index = +ix.idxPx; } catch { /* 없음 */ }
       if (x.mark && x.index) x.premium = ((x.mark / x.index) - 1) * 100;
       o.okx = x;
@@ -363,7 +363,7 @@ async function futData() {
       const sym = s + 'USDT', y = {};
       const p = prem.status === 'fulfilled' && Array.isArray(prem.value) ? prem.value.find((r) => r.symbol === sym) : null;
       if (p) { y.mark = +p.markPrice; y.index = +p.indexPrice; y.funding = +p.lastFundingRate; y.next = +p.nextFundingTime; if (y.index) y.premium = ((y.mark / y.index) - 1) * 100; }
-      try { const h = await bnGet(`/futures/data/openInterestHist?symbol=${sym}&period=1h&limit=25`); if (h.length) { const a0 = +h[0].sumOpenInterestValue, a1 = +h[h.length - 1].sumOpenInterestValue; y.oiUsd = a1; y.oiChg = a0 ? ((a1 / a0) - 1) * 100 : null; } } catch { /* 없음 */ }
+      try { const h = await bnGet(`/futures/data/openInterestHist?symbol=${sym}&period=1h&limit=25`); if (h.length) { y.oiUsd = +h[h.length - 1].sumOpenInterestValue; const a0 = +h[0].sumOpenInterest, a1 = +h[h.length - 1].sumOpenInterest; y.oiChg = a0 ? ((a1 / a0) - 1) * 100 : null; } } catch { /* 없음 */ }
       try { const r = await bnGet(`/futures/data/globalLongShortAccountRatio?symbol=${sym}&period=1h&limit=1`); if (r.length) { y.ls = +r[0].longShortRatio; y.longPct = +r[0].longAccount * 100; } } catch { /* 없음 */ }
       try { const r = await bnGet(`/futures/data/takerlongshortRatio?symbol=${sym}&period=1h&limit=4`); if (r.length) { const b = r.reduce((s2, z) => s2 + +z.buyVol, 0), sl = r.reduce((s2, z) => s2 + +z.sellVol, 0); y.taker = sl ? b / sl : null; } } catch { /* 없음 */ }
       o.bn = y;
@@ -397,7 +397,7 @@ async function viewFut() {
       <div class="muted" style="font-size:12px;margin-top:4px">뉴욕 ${ses.ny} · 정규장 한국 23:30~06:00(서머타임엔 22:30~05:00) · 무기한 선물은 24시간 거래되어 장이 닫힌 밤·주말엔 실제 ETF와 차이가 날 수 있습니다. 미국 공휴일은 따로 표시하지 않습니다.</div></div>
     <div id="fut"><div class="card"><div class="muted">미결제약정·펀딩비·롱숏 비율을 받는 중…</div></div></div>
     <div class="card"><details><summary><b>지표 읽는 법</b></summary><ul class="steps" style="font-size:13px;margin-top:6px">
-      <li><b>미결제약정(OI)</b>: 아직 정리되지 않은 선물 계약의 총액. 가격과 함께 늘면 새 돈이 그 방향으로 들어오는 것, 줄면 기존 포지션이 정리되는 것.</li>
+      <li><b>미결제약정(OI)</b>: 아직 정리되지 않은 선물 계약의 총액. 가격과 함께 늘면 새 돈이 그 방향으로 들어오는 것, 줄면 기존 포지션이 정리되는 것. '미결제 24시간'은 달러 금액이 아니라 <b>계약 수</b> 기준이라 가격이 올라 저절로 커지는 부분은 빠져 있습니다.</li>
       <li><b>펀딩비</b>: 선물값을 현물(지수)에 붙여 두려고 롱·숏이 서로 주고받는 돈. +면 롱이 숏에게 냄(롱 쏠림), −면 반대. 너무 크면 한쪽 과열.</li>
       <li><b>괴리율(프리미엄)</b>: 선물 표시가격이 기초 지수보다 얼마나 비싼지. +면 선물 참여자가 낙관적, −면 비관적. 미국장이 닫힌 시간엔 더 벌어지기 쉬움.</li>
       <li><b>롱/숏 계좌 비율</b>(바이낸스·바이비트): 롱 계좌 수 ÷ 숏 계좌 수. 한쪽으로 크게 쏠리면 반대로 흔들릴 위험(쏠린 쪽 청산)이 큼.</li>
@@ -418,7 +418,7 @@ async function viewFut() {
         <tr><td>펀딩비</td><td>${fr(k.funding)}</td><td>${fr(b.funding)}</td><td>${fr(y.funding)}</td></tr>
         <tr><td>괴리율</td><td>${pct(k.premium, 3)}</td><td>${pct(b.premium, 3)}</td><td>${pct(y.premium, 3)}</td></tr>
         <tr><td>다음 정산</td><td>${k.next ? kTime(k.next) : '-'}</td><td>${b.next ? kTime(b.next) : '-'}</td><td>${y.next ? kTime(y.next) : '-'}</td></tr>
-        <tr><td>미결제 24시간</td><td>-</td><td>${pct(b.oiChg)}</td><td>${pct(y.oiChg)}</td></tr>
+        <tr><td>미결제 24시간<br><span class="muted" style="font-size:11px">(계약 수)</span></td><td>-</td><td>${pct(b.oiChg)}</td><td>${pct(y.oiChg)}</td></tr>
         <tr><td>롱/숏 계좌</td><td>-</td><td>${lsv(b)}</td><td>${lsv(y)}</td></tr>
         <tr><td>매수/매도(4시간)</td><td>-</td><td>${b.taker != null ? b.taker.toFixed(2) : '-'}</td><td>-</td></tr></tbody></table></div>
       ${fHot || lsWarn ? `<div style="font-size:12px;margin-top:4px;color:#B26B00">${fHot ? '⚠️ 펀딩비가 커서 한쪽이 과열 ' : ''}${lsWarn ? `⚠️ 롱/숏 ${lsMax.map((v) => v.toFixed(2)).join('·')}로 한쪽 쏠림` : ''}</div>` : ''}
