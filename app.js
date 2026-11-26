@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -18,6 +18,9 @@ const KV = (() => {
 /* ───────── 도우미 ───────── */
 const $ = (s, el = document) => el.querySelector(s);
 const view = () => $('#view');
+// 화면마다 표를 하나 받고, 다른 화면이 시작되면 그 표는 무효 → 늦게 끝난 화면은 그리지 않음
+let viewGen = 0;
+const takeView = () => { const g = ++viewGen; return () => g === viewGen; };
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pct = (x, d = 2) => (x == null || !Number.isFinite(x) ? '-' : `${x > 0 ? '+' : ''}${x.toFixed(d)}%`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -136,11 +139,13 @@ const routes = [
   [/^#\/s$/, 'sig', viewSignals],
   [/^#\/t$/, 'tools', viewTools],
 ];
+let renderGen = 0; // 화면이 바뀌면 늦게 끝난 이전 화면의 오류는 버림
 async function render() {
+  const gen = ++renderGen;
   const h = (location.hash || '#/').split('?')[0];
   for (const [re, tab, fn] of routes) {
     const m = h.match(re);
-    if (m) { document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab)); try { await fn(m); } catch (e) { console.error(e); view().innerHTML = `<div class="card errbox">오류: ${esc(e.message)}</div>`; } return; }
+    if (m) { document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab)); try { await fn(m); } catch (e) { console.error(e); if (gen !== renderGen) return; view().innerHTML = `<div class="card errbox">오류: ${esc(e.message)}</div>`; } return; }
   }
   location.hash = '#/';
 }
@@ -154,8 +159,10 @@ const SORTS = { up: '🔼 반등 포착', dn: '🔽 하락 전환 포착', stron
 const HIGHER = { '15m': '1H', '30m': '4H', '1H': '4H', '4H': '1D', '1D': null };
 const SETS = { top: '자동 상위 20', core: '핵심(나스닥·S&P·반도체)', nasdaq: '나스닥100', sp500: 'S&P500', semi: '반도체', single: '개별주 레버리지', other: '기타 ETF' };
 async function viewScan() {
+  const live = takeView();
   setTitle('📊 선물 스캐너');
   const prefs = await KV.get('scanPrefs', { set: 'top', tf: '1H', sort: 'up' }); prefs.tf = fixTf(prefs.tf);
+  if (!live()) return;
   view().innerHTML = `<div class="card warnlist" style="margin-top:0;font-size:13px">${DISC}</div>
     <div class="chips">${Object.entries(SETS).map(([k, v]) => `<button class="chip${prefs.set === k ? ' on' : ''}" data-set="${k}" type="button">${v}</button>`).join('')}</div>
     <div class="seg" role="radiogroup" aria-label="봉 단위">${Object.entries(TF).map(([k, v]) => `<label><input type="radio" name="tf" value="${k}"${prefs.tf === k ? ' checked' : ''}><span>${v.label.replace('봉', '')}</span></label>`).join('')}</div>
@@ -175,7 +182,8 @@ async function viewScan() {
   view().querySelectorAll('[name=tf]').forEach((r) => { r.onchange = async () => { prefs.tf = r.value; await KV.set('scanPrefs', prefs); viewScan(); }; });
   view().querySelectorAll('[data-sort]').forEach((b) => { b.onclick = async () => { prefs.sort = b.dataset.sort; await KV.set('scanPrefs', prefs); view().querySelectorAll('[data-sort]').forEach((x) => x.classList.toggle('on', x === b)); drawList(); }; });
 
-  let T; try { T = await tickers(); } catch (e) { $('#list').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
+  let T; try { T = await tickers(); } catch (e) { if (live()) $('#list').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
+  if (!live()) return;
   let syms = Object.keys(T.t);
   if (prefs.set === 'top') syms = syms.sort((a, b) => T.t[b].vol - T.t[a].vol).slice(0, 20);
   else if (prefs.set === 'core') syms = SCAN.CORE.filter((s) => T.t[s]);
@@ -191,6 +199,7 @@ async function viewScan() {
     return { s, src: A.src, a, d: d && !d.error ? d : null, tk: T.t[s], hiTf: htf, bz, sz, st };
   });
   const rows = R.filter((x) => x && !x.error && x.a && !x.a.error);
+  if (!live()) return;
   function drawList() {
     const key = { up: (x) => x.a.upScore * 10 + (x.st ? x.st.nb : 0) - x.a.dnScore, dn: (x) => x.a.dnScore * 10 + (x.st ? x.st.ns : 0) - x.a.upScore, strong: (x) => (x.st ? Math.max(x.st.strongBuy ? x.st.nb : 0, x.st.strongSell ? x.st.ns : 0) : 0), spike: (x) => x.a.volRatio || 0, atr: (x) => (x.d && x.d.atrPct) || 0 }[prefs.sort] || ((x) => x.a.upScore);
     let L = rows.slice().sort((p, q) => key(q) - key(p));
@@ -206,6 +215,7 @@ async function viewScan() {
   }
   drawList();
   const mk = await pool(['QQQ', 'SPY'], 2, async (s) => ({ s, d: SCAN.analyze((await candles(s, '1D', T)).cs, { daily: true }) }));
+  if (!live()) return;
   const ses = usSession();
   $('#mkt').innerHTML = `<div class="row spread"><h2 style="margin:0">시장 방향 <span class="muted">(일봉)</span></h2><span style="color:${ses.c};font-weight:700;font-size:13px">미국 ${ses.t}</span></div>
     ${mk.map((x) => x.d && !x.d.error ? `<div style="font-size:14px;margin:4px 0"><b>${x.s}</b> ${fmt(x.d.price)} · RSI ${x.d.rsi.toFixed(1)} · <span class="${x.d.trend === 'up' ? 'up' : x.d.trend === 'down' ? 'down' : ''}">${esc(SCAN.dayTrend(x.d))}</span></div>` : '').join('')}
@@ -245,10 +255,12 @@ function scanRow(x, i, sort) {
 /* ═════════ 📈 차트·매물대 ═════════ */
 const CHART_SYMS = ['QQQ', 'TQQQ', 'SQQQ', 'US100', 'SPY', 'SOXL', 'SOXS'];
 async function viewChart(sym) {
+  const live = takeView();
   setTitle(`📈 ${sym} 차트·매물대`);
   const prefs = await KV.get('chartPrefs', { tf: '1H' }); prefs.tf = fixTf(prefs.tf);
   await KV.set('lastChart', sym);
   const T = await tickers();
+  if (!live()) return;
   const others = Object.keys(T.t).filter((s) => !CHART_SYMS.includes(s)).sort((a, b) => T.t[b].vol - T.t[a].vol);
   view().innerHTML = `<div class="chips">${CHART_SYMS.filter((s) => T.t[s]).map((s) => `<a class="chip${s === sym ? ' on' : ''}" href="#/c/${s}">${s}</a>`).join('')}
       <select id="other" style="width:auto;min-height:32px;padding:4px 8px;border-radius:999px"><option value="">다른 종목…</option>${others.map((s) => `<option value="${s}"${s === sym ? ' selected' : ''}>${s} · ${esc(SCAN.META[s].name)}</option>`).join('')}</select></div>
@@ -258,7 +270,8 @@ async function viewChart(sym) {
     <div id="sum"><div class="card"><div class="muted">계산 중…</div></div></div>`;
   $('#other').onchange = (e) => { if (e.target.value) location.hash = '#/c/' + e.target.value; };
   view().querySelectorAll('[name=tf]').forEach((r) => { r.onchange = async () => { prefs.tf = r.value; await KV.set('chartPrefs', prefs); viewChart(sym); }; });
-  let A; try { A = await candles(sym, prefs.tf, T); } catch (e) { $('#sum').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
+  let A; try { A = await candles(sym, prefs.tf, T); } catch (e) { if (live()) $('#sum').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
+  if (!live()) return;
   const cs = A.cs, a = SCAN.analyze(cs, { dayStart: dayStartUtc(), daily: prefs.tf === '1D' });
   if (a.error) { $('#sum').innerHTML = `<div class="card errbox">${esc(a.error)}</div>`; return; }
   const L = LV.levels(cs, a.atr), bz = LV.buyZone(L, a), sz = LV.sellZone(L, a);
@@ -377,6 +390,7 @@ function oiRead(priceChg, oiChg) {
   return { t: '가격·미결제 변화가 작아 뚜렷하지 않음', c: 'var(--muted)' };
 }
 async function viewFut() {
+  const live = takeView();
   setTitle('🧭 선물 지표');
   const ses = usSession();
   view().innerHTML = `<div class="card" style="margin-top:0"><div class="row spread"><b>미국장</b><b style="color:${ses.c}">${ses.t}</b></div>
@@ -389,7 +403,8 @@ async function viewFut() {
       <li><b>롱/숏 계좌 비율</b>(바이낸스·바이비트): 롱 계좌 수 ÷ 숏 계좌 수. 한쪽으로 크게 쏠리면 반대로 흔들릴 위험(쏠린 쪽 청산)이 큼.</li>
       <li><b>공격적 매수/매도 비율</b>(바이낸스, 최근 4시간): 시장가로 산 양 ÷ 판 양. 1보다 크면 사는 쪽이 더 급함.</li></ul></details></div>
     <div class="disc">${DISC}</div>`;
-  let D; try { D = await futData(); } catch (e) { $('#fut').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
+  let D; try { D = await futData(); } catch (e) { if (live()) $('#fut').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
+  if (!live()) return;
   const fr = (x) => (x == null ? '-' : (x * 100).toFixed(4) + '%');
   const rows = FUT_SYMS.map((s) => D.rows[s]).filter(Boolean).map((o) => {
     const b = o.bn || {}, k = o.okx || {}, y = o.by || {}, oiSrc = b.oiChg != null ? ['바이낸스', b.oiChg] : y.oiChg != null ? ['바이비트', y.oiChg] : ['', null];
@@ -414,9 +429,11 @@ async function viewFut() {
 
 /* ═════════ 🔔 신호(QQQ 규칙 신호 + 디스코드 알림) ═════════ */
 async function viewSignals() {
-  await viewNq(); // nqui.js(가격 위치 앱과 같은 화면) — 끝에 디스코드 아침 정리 켜기 카드 추가
+  const live = takeView();
+  if (!(await viewNq(live)) || !live()) return; // nqui.js(가격 위치 앱과 같은 화면) — 끝에 디스코드 아침 정리 켜기 카드 추가
   const host = document.createElement('div'); host.id = 'scAlert'; view().appendChild(host);
   const cfg = await KV.get('scAlert', { enabled: false });
+  if (!live()) return;
   host.innerHTML = `<div class="card"><div class="row spread"><b>📊 디스코드 아침 정리</b><label class="row" style="margin:0;color:var(--ink)"><input type="checkbox" id="scAl" ${cfg.enabled ? 'checked' : ''} style="width:22px;min-height:22px"> 켜기</label></div>
     <div class="muted" style="font-size:13px;margin-top:4px">매일 한국 9시 10분쯤 OKX ETF 선물의 시장 방향·반등/하락 전환 상위·거래대금·변동성을 디스코드로 받습니다(가격 위치 앱과 같은 스크립트, 같은 설정).</div></div>`;
   $('#scAl').onchange = async (e) => {
@@ -429,8 +446,10 @@ async function viewSignals() {
 
 /* ═════════ 🧮 도구(청산가 계산기·연결 설정) ═════════ */
 async function viewTools() {
+  const live = takeView();
   setTitle('🧮 도구');
   const cfg = await KV.get('relay', {}), pre = await KV.get('calcPrefill', null), cp = await KV.get('calc', { acct: 1000, risk: 1, lev: 3, side: 'long', rr: 2, mmr: 0.5 });
+  if (!live()) return;
   if (pre) { cp.entry = +pre.entry.toFixed(2); cp.stop = +pre.stop.toFixed(2); cp.sym = pre.sym; cp.side = 'long'; if (pre.rr) cp.rr = pre.rr; await KV.set('calcPrefill', null); }
   view().innerHTML = `<div class="card" style="margin-top:0"><h2>🧮 청산가 계산기 <span class="muted">${cp.sym ? '(' + esc(cp.sym) + ' 차트에서 가져옴)' : ''}</span></h2>
       <div class="calcintro">💡 <b>이렇게 씁니다</b>: "이번 거래가 틀리면 <b>최대 얼마까지 잃어도 되는지</b>"를 먼저 정하면, 손절가까지 거리를 보고 <b>몇 주(계약)를 사야 하는지</b> 거꾸로 계산해 줍니다. 손절가에 닿아도 정한 금액만 잃도록 수량을 맞추는 방법입니다.</div>
@@ -462,6 +481,7 @@ async function viewTools() {
     const acct = v('acct'), risk = v('risk'), entry = v('entry'), stop = v('stop'), lev = v('lev'), rr = v('rr');
     await KV.set('calc', { acct, risk, lev, side, rr, mmr: cp.mmr, entry, stop });
     const out = $('#calcOut');
+    if (!out) return;
     if (!(acct > 0 && risk > 0 && entry > 0 && stop > 0 && lev > 0)) { out.innerHTML = '<div class="muted">계좌·위험·진입가·손절가·레버리지를 넣으세요.</div>'; return; }
     const dist = side === 'long' ? entry - stop : stop - entry;
     if (dist <= 0) { out.innerHTML = `<div class="errbox">${side === 'long' ? '롱은 손절가가 진입가보다 낮아야' : '숏은 손절가가 진입가보다 높아야'} 합니다.</div>`; return; }

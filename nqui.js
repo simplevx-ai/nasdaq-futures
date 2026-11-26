@@ -38,13 +38,15 @@ const nqTime = (t) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', da
 const n2 = (x, d = 2) => (x == null || !Number.isFinite(x) ? '-' : Number(x).toFixed(d));
 const chg = (cs, k) => (cs.length > k ? ((cs[cs.length - 1].c / cs[cs.length - 1 - k].c) - 1) * 100 : null);
 
-async function viewNq() {
+async function viewNq(live = takeView()) {
   setTitle('🔔 QQQ 규칙 신호');
   view().innerHTML = '<div class="card"><div class="muted">OKX 시세를 받는 중… (처음엔 10초쯤)</div></div>';
   let D;
-  try { D = await nqLoad(); } catch (e) { view().innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
+  try { D = await nqLoad(); } catch (e) { if (live()) view().innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return false; }
+  if (!live()) return false;
   const ev = NQ.evaluate(D.qd, { TQQQ: D.T, SQQQ: D.S }), R = ev.regime, st = R ? NQ_STATE_KO[R.state] : null, bt = ev.bt, s = bt.stats;
   const cfg = await KV.get('nqAlert', { enabled: false }), rs = await KV.get('relayStatus', {});
+  if (!live()) return false;
 
   // 1) 세 종목 비교
   const day = (sym) => { const cs = sym === 'QQQ' ? D.qd : null; return cs; };
@@ -124,6 +126,7 @@ async function viewNq() {
       const st = await KV.get('relayStatus', {}); st.nq = d.nq; st.version = d.version; await KV.set('relayStatus', st);
     }).catch(() => {});
   }
+  return true;
 }
 
 function nqCanvas(cv) { const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight; cv.width = w * dpr; cv.height = h * dpr; const g = cv.getContext('2d'); g.scale(dpr, dpr); return { g, w, h, css: getComputedStyle(document.documentElement) }; }
