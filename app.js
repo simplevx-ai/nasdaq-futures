@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -311,7 +311,8 @@ async function viewChart(sym) {
     <div class="seg" role="radiogroup" aria-label="봉 단위">${Object.entries(TF).map(([k, v]) => `<label><input type="radio" name="tf" value="${k}"${prefs.tf === k ? ' checked' : ''}><span>${v.label.replace('봉', '')}</span></label>`).join('')}</div>
     <div class="card" style="margin-top:10px;padding:8px"><canvas id="cv" class="chart" style="height:340px" aria-label="캔들 차트와 매물대"></canvas>
       <div class="muted" style="font-size:11px;margin-top:4px">빨강 상승·파랑 하락 봉 · <span style="color:#E8A317">EMA20</span> · <span style="color:#8E5CF0">EMA50</span> · <span style="color:#1F9D63">VWAP(그날)</span> · 오른쪽 막대: 매물대(최근 200봉) · <span style="color:#E8A317">━ POC</span> · ┅ 가치영역(VAH·VAL)</div></div>
-    <div id="sum"><div class="card"><div class="muted">계산 중…</div></div></div>`;
+    <div id="sum"><div class="card"><div class="muted">계산 중…</div></div></div>${KRX_CODE[sym] ? '<div id="krx"></div>' : ''}`;
+  if (KRX_CODE[sym]) krxCard(sym).catch(() => {});
   $('#other').onchange = (e) => { if (e.target.value) location.hash = '#/c/' + e.target.value; };
   // 분류를 누르면 그 분류의 종목 칩으로 바꾸고, 첫 종목 차트로
   view().querySelectorAll('[data-ccat]').forEach((b) => { b.onclick = async () => { const c = b.dataset.ccat; await KV.set('chartCat', c); if (CL[c] && CL[c].length) location.hash = '#/c/' + (CL[c].includes(sym) ? sym : CL[c][0]); }; });
@@ -614,3 +615,29 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 // 차트 탭은 마지막으로 본 종목으로
 (async () => { const last = await KV.get('lastChart', 'QQQ'); const a = document.querySelector('.tabs a[data-tab=chart]'); if (a) a.href = '#/c/' + last; })();
 render();
+
+/* 🇰🇷 OKX 한국 종목 선물 ↔ 한국거래소 실제 가격(네이버 증권, 알림 스크립트 v15가 중계) */
+const KRX_CODE = { SAMSUNG: '005930', SKHYNIX: '000660', HYUNDAI: '005380', LGELECTRONICS: '066570', NAVER: '035420' };
+async function krxCard(sym) {
+  const host = $('#krx'); if (!host) return;
+  if (!(await relayOn())) { host.innerHTML = '<div class="card muted" style="font-size:13px">🇰🇷 계산기 탭에서 알림 스크립트를 연결하면 한국거래소 실제 가격·괴리·외국인/기관 수급이 여기 나옵니다.</div>'; return; }
+  host.innerHTML = '<div class="card"><div class="muted">한국거래소 가격(네이버) 받는 중…</div></div>';
+  let info, fx, ix, okx;
+  try { [info, fx, ix, okx] = await Promise.all([relay('naver', { kind: 'info', code: KRX_CODE[sym] }), relay('naver', { kind: 'fx' }), relay('naver', { kind: 'index' }), okxGet('/market/ticker?instId=' + sym + '-USDT-SWAP').then((r) => +r[0].last)]); }
+  catch (e) { if (host.isConnected) host.innerHTML = `<div class="card errbox">한국거래소 가격을 못 받았습니다: ${esc(e.message)}${/모르는|action/.test(e.message) ? ' — 알림 스크립트를 v15로 바꿔야 합니다' : ''}</div>`; return; }
+  if (!host.isConnected) return;
+  const q = info.quote, usd = q && fx.usdkrw ? q.price / fx.usdkrw : null, gap = usd ? (okx / usd - 1) * 100 : null, T = info.trend || [];
+  const n = (x) => (x > 0 ? '+' : '') + Math.round(x).toLocaleString('ko-KR'), sum = (k) => T.reduce((a, x) => a + x[k], 0);
+  const gcol = gap == null ? '' : Math.abs(gap) < 1 ? 'var(--green)' : Math.abs(gap) < 3 ? '#E8A317' : 'var(--red)';
+  host.innerHTML = `<div class="card"><h2>🇰🇷 한국거래소 실제 가격과 비교 <span class="muted">(${esc(info.name || sym)} ${KRX_CODE[sym]})</span></h2>
+    <div class="grid2" style="font-size:14px">
+      <div>한국거래소 ${q && q.status === 'OPEN' ? '(장중)' : '(장 마감 종가)'}<br><b>${q ? q.price.toLocaleString('ko-KR') + '원' : '-'}</b> <span class="${q && q.chg > 0 ? 'up' : 'down'}">${q ? pct(q.chg) : ''}</span></div>
+      <div>달러로 바꾸면(원/달러 ${fx.usdkrw ? fx.usdkrw.toLocaleString('ko-KR') : '-'})<br><b>$${usd ? usd.toFixed(2) : '-'}</b></div>
+      <div>OKX 선물 지금가<br><b>$${fmt(okx)}</b></div>
+      <div>괴리(OKX − 거래소)<br><b style="color:${gcol};font-size:18px">${gap != null ? pct(gap) : '-'}</b></div></div>
+    <div class="muted" style="font-size:12px;margin-top:4px">한국장이 닫힌 시간에는 OKX만 움직이므로 괴리가 커질 수 있습니다(다음 날 한국장 시가 방향을 미리 보여 주기도 함). 1% 안이면 가격이 잘 맞는 상태입니다.</div>
+    ${T.length ? `<h4>외국인·기관 순매수(최근 ${T.length}일, 주)</h4><div style="font-size:14px">외국인 <b class="${sum('foreign') > 0 ? 'up' : 'down'}">${n(sum('foreign'))}</b> · 기관 <b class="${sum('organ') > 0 ? 'up' : 'down'}">${n(sum('organ'))}</b> · 개인 ${n(sum('indiv'))} · 외국인 보유 ${esc(T[0].hold || '-')}</div>
+      <div class="muted" style="font-size:12px">${sum('foreign') > 0 && sum('organ') > 0 ? '외국인·기관이 함께 사는 중' : sum('foreign') < 0 && sum('organ') < 0 ? '외국인·기관이 함께 파는 중' : '외국인·기관 방향이 엇갈림'} · 어제 외국인 ${n(T[0].foreign)}, 기관 ${n(T[0].organ)}</div>` : ''}
+    ${ix.index ? `<div style="font-size:13px;margin-top:6px">${ix.index.map((x) => `${esc(x.name)} <b>${esc(x.price)}</b> <span class="${String(x.chg).startsWith('-') ? 'down' : 'up'}">${esc(x.chg)}%</span>`).join(' · ')}</div>` : ''}
+    <div class="muted" style="font-size:11px;margin-top:4px">네이버 증권 공개 주소(공식 API 아님)를 알림 스크립트가 받아 옴 · 공부용</div></div>`;
+}
