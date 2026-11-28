@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.11.1';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
