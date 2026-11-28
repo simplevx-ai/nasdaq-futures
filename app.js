@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -648,3 +648,6 @@ async function krxCard(sym) {
     ${ix.index ? `<div style="font-size:13px;margin-top:6px">${ix.index.map((x) => `${esc(x.name)} <b>${esc(x.price)}</b> <span class="${String(x.chg).startsWith('-') ? 'down' : 'up'}">${esc(x.chg)}%</span>`).join(' · ')}</div>` : ''}
     <div class="muted" style="font-size:11px;margin-top:4px">네이버 증권 공개 주소(공식 API 아님)를 알림 스크립트가 받아 옴 · 공부용</div></div>`;
 }
+
+// 🔊 가격 도달 소리 알림: 켜 둔 경우 앱을 열면 바로 감시 시작
+try { paSoundStart('nf'); } catch { /* 없음 */ }
