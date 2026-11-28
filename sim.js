@@ -1,6 +1,6 @@
 /* 🧪 모의 수익 계산기 — 진입가·투자금·배율·익절·손절을 넣으면 이익/손실 금액을 바로 보여 준다.
  * 선물 스캐너·코인 스캐너가 같은 파일을 쓴다(주문 기능 없음, 계산만). 필요한 전역: $, KV, esc, fmt, pct */
-const SIM_DEF = { side: 'long', entry: '', margin: 100, lev: 5, tp: '', sl: '', tpPct: 3, slPct: 1.5, fee: 0.05, mmr: 0.5, unit: 'USDT' };
+const SIM_DEF = { acct: 1000, riskP: 1, side: 'long', entry: '', margin: 100, lev: 5, tp: '', sl: '', tpPct: 3, slPct: 1.5, fee: 0.05, mmr: 0.5, unit: 'USDT' };
 
 function simCard(sym) {
   return `<div class="card" style="margin-top:0" id="simCard"><h2>🧪 모의 수익 계산기 <span class="muted">${sym ? '(' + esc(sym) + ')' : ''}</span></h2>
@@ -13,6 +13,9 @@ function simCard(sym) {
       <div><label for="s_fee">④ 수수료 (한 번, %)</label><input id="s_fee" type="number" inputmode="decimal" step="0.01"><div class="hint">시장가 보통 0.05% · 들어갈 때·나올 때 두 번</div></div>
       <div><label for="s_tp">⑤ 익절가</label><input id="s_tp" type="number" inputmode="decimal"><div class="sim-chips" data-for="tp">${[1, 2, 3, 5, 10].map((x) => `<button type="button" class="chip" data-v="${x}">+${x}%</button>`).join('')}</div><div class="hint" id="s_tpHint"></div></div>
       <div><label for="s_sl">⑥ 손절가</label><input id="s_sl" type="number" inputmode="decimal"><div class="sim-chips" data-for="sl">${[0.5, 1, 1.5, 2, 3].map((x) => `<button type="button" class="chip" data-v="${x}">-${x}%</button>`).join('')}</div><div class="hint" id="s_slHint"></div></div></div>
+    <details style="margin-top:8px" id="sizeBox" open><summary><b>📐 포지션 크기 자동 추천</b> <span class="muted" style="font-size:12px">(손절에 닿아도 계좌의 정한 %만 잃게)</span></summary>
+      <div class="grid2" style="margin-top:6px"><div><label for="s_acct">내 계좌 전체 (USDT)</label><input id="s_acct" type="number" inputmode="decimal"></div><div><label for="s_risk">한 번에 잃어도 되는 %</label><input id="s_risk" type="number" inputmode="decimal" step="0.5"><div class="hint">보통 1~2%</div></div></div>
+      <div id="sizeOut" style="margin-top:6px"></div></details>
     <div id="simOut" style="margin-top:10px"></div>
     <div class="muted" style="font-size:12px;margin-top:6px">모의 계산입니다(주문 없음). 청산가는 격리 증거금·유지증거금률 0.5% 가정 대략값이고, 펀딩비·미끄러짐은 빠져 있습니다. 실제 주문 전 거래소 화면으로 확인하세요.</div></div>`;
 }
@@ -23,7 +26,7 @@ async function simBind(prefill) {
   const el = (id) => document.getElementById(id);
   if (!el('simCard')) return;
   const put = (id, v) => { el(id).value = v === '' || v == null ? '' : v; };
-  put('s_entry', st.entry); put('s_margin', st.margin); put('s_lev', st.lev); put('s_fee', st.fee); put('s_tp', st.tp); put('s_sl', st.sl);
+  put('s_acct', st.acct); put('s_risk', st.riskP); put('s_entry', st.entry); put('s_margin', st.margin); put('s_lev', st.lev); put('s_fee', st.fee); put('s_tp', st.tp); put('s_sl', st.sl);
   document.querySelector(`[name=sside][value=${st.side === 'short' ? 'short' : 'long'}]`).checked = true;
   const num = (id) => parseFloat(el(id).value);
   const side = () => document.querySelector('[name=sside]:checked').value;
@@ -37,10 +40,11 @@ async function simBind(prefill) {
   }));
   const run = async () => {
     const sd = side(), lg = sd === 'long', entry = num('s_entry'), margin = num('s_margin'), lev = num('s_lev'), fee = (num('s_fee') || 0) / 100, tp = num('s_tp'), sl = num('s_sl');
-    await KV.set('sim', { side: sd, entry: el('s_entry').value, margin: el('s_margin').value, lev: el('s_lev').value, fee: el('s_fee').value, tp: el('s_tp').value, sl: el('s_sl').value });
+    await KV.set('sim', { acct: el('s_acct').value, riskP: el('s_risk').value, side: sd, entry: el('s_entry').value, margin: el('s_margin').value, lev: el('s_lev').value, fee: el('s_fee').value, tp: el('s_tp').value, sl: el('s_sl').value });
     const out = el('simOut'); if (!out) return;
     const hint = (id, p) => { const h = el(id); if (h) h.textContent = entry > 0 && p > 0 ? `진입가 대비 ${pct((p / entry - 1) * 100)}` : ''; };
     hint('s_tpHint', tp); hint('s_slHint', sl);
+    sizeRec(entry, sl, lg, fee);
     if (!(entry > 0 && margin > 0 && lev > 0)) { out.innerHTML = '<div class="muted">진입가·넣을 돈·배율을 넣으세요.</div>'; return; }
     const size = margin * lev, qty = size / entry, mmr = 0.005;
     const liq = lg ? entry * (1 - 1 / lev + mmr) : entry * (1 + 1 / lev - mmr);
@@ -71,7 +75,18 @@ async function simBind(prefill) {
       ${liqFirst ? '<div class="errbox">⚠️ 손절가에 닿기 전에 <b>강제 청산</b>이 먼저 일어납니다. 배율을 낮추거나 손절가를 진입가에 가깝게 하세요.</div>' : sl > 0 ? '<div class="okbox" style="font-weight:500">✅ 손절가가 청산가보다 먼저입니다.</div>' : '<div class="warnlist">손절가를 넣지 않았습니다 — 청산가까지 그대로 잃을 수 있습니다.</div>'}
       <details style="margin-top:8px"><summary><b>가격이 움직이면 (${lg ? '롱' : '숏'}, USDT)</b></summary><div class="tblwrap"><table class="md" style="margin-top:6px"><thead><tr><th>움직임</th><th>오르면</th><th>내리면</th></tr></thead><tbody>${ladder}</tbody></table></div></details>`;
   };
-  document.querySelectorAll('#s_entry,#s_margin,#s_lev,#s_fee,#s_tp,#s_sl').forEach((x) => { x.oninput = run; });
+  // 포지션 크기 추천: 위험 금액 ÷ 손절 거리 = 포지션 크기 → 증거금이 계좌의 25%를 넘지 않는 가장 낮은 배율, 손절보다 청산이 먼저 오지 않는 최대 배율
+  function sizeRec(entry, sl, lg, fee) {
+    const box = el('sizeOut'); if (!box) return;
+    const acct = num('s_acct'), rp = num('s_risk');
+    if (!(acct > 0 && rp > 0 && entry > 0 && sl > 0) || (lg ? sl >= entry : sl <= entry)) { box.innerHTML = '<div class="muted" style="font-size:12px">계좌·%·진입가·손절가를 넣으면 추천이 나옵니다.</div>'; return; }
+    const d = Math.abs(entry - sl) / entry, risk = acct * rp / 100, size = risk / (d + fee * 2);
+    const maxLev = Math.max(1, Math.floor(1 / (d + 0.005 + fee * 2) * 0.9)), needLev = Math.max(1, Math.ceil(size / (acct * 0.25)));
+    const lev = Math.min(maxLev, needLev), margin = size / lev, ok = needLev <= maxLev;
+    box.innerHTML = `<div class="calcsum">📐 <b>${size.toFixed(0)} USDT</b> 어치(손절 거리 ${(d * 100).toFixed(2)}%)를 잡으면 손절 때 약 <b class="down">−${risk.toFixed(2)} USDT</b>(계좌의 ${rp}%)<br>👉 추천: 넣을 돈 <b>${margin.toFixed(2)} USDT × ${lev}배</b>${ok ? '' : ' <span style="color:#B26B00">(배율 한도 때문에 증거금이 계좌의 25%를 넘음 — 손절을 가깝게 하거나 % 낮추기)</span>'}<br><span class="muted" style="font-size:12px">이 손절 거리에서 손절보다 청산이 먼저 오지 않는 최대 배율 약 ${maxLev}배</span></div><button class="btn small" id="sizeUse" type="button">추천값을 위에 넣기</button>`;
+    el('sizeUse').onclick = () => { el('s_margin').value = margin.toFixed(2); el('s_lev').value = lev; run(); };
+  }
+  document.querySelectorAll('#s_entry,#s_margin,#s_lev,#s_fee,#s_tp,#s_sl,#s_acct,#s_risk').forEach((x) => { x.oninput = run; });
   document.querySelectorAll('[name=sside]').forEach((x) => { x.onchange = run; });
   run();
 }

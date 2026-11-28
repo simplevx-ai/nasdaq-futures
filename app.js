@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -311,7 +311,7 @@ async function viewChart(sym) {
     <div class="seg" role="radiogroup" aria-label="봉 단위">${Object.entries(TF).map(([k, v]) => `<label><input type="radio" name="tf" value="${k}"${prefs.tf === k ? ' checked' : ''}><span>${v.label.replace('봉', '')}</span></label>`).join('')}</div>
     <div class="card" style="margin-top:10px;padding:8px"><canvas id="cv" class="chart" style="height:340px" aria-label="캔들 차트와 매물대"></canvas>
       <div class="muted" style="font-size:11px;margin-top:4px">빨강 상승·파랑 하락 봉 · <span style="color:#E8A317">EMA20</span> · <span style="color:#8E5CF0">EMA50</span> · <span style="color:#1F9D63">VWAP(그날)</span> · 오른쪽 막대: 매물대(최근 200봉) · <span style="color:#E8A317">━ POC</span> · ┅ 가치영역(VAH·VAL)</div></div>
-    <div id="sum"><div class="card"><div class="muted">계산 중…</div></div></div>${KRX_CODE[sym] ? '<div id="krx"></div>' : ''}`;
+    <div id="sum"><div class="card"><div class="muted">계산 중…</div></div></div>${KRX_CODE[sym] ? '<div id="krx"></div>' : ''}<div id="xpa"></div><div id="xmtf"></div><div id="xliq"></div><div id="xwh"></div>`;
   if (KRX_CODE[sym]) krxCard(sym).catch(() => {});
   $('#other').onchange = (e) => { if (e.target.value) location.hash = '#/c/' + e.target.value; };
   // 분류를 누르면 그 분류의 종목 칩으로 바꾸고, 첫 종목 차트로
@@ -325,6 +325,9 @@ async function viewChart(sym) {
   drawChart($('#cv'), cs, L.vp, a);
   const lvRow = (x, kind) => `<li><b class="${kind === 'res' ? 'up' : 'down'}">${fmt(x.p)}</b> <span class="muted">(${pct(x.dist)})</span> ${x.labels.map(esc).join(' · ')}${x.n >= 2 ? ' <b>★</b>' : ''}</li>`;
   const vp = L.vp, d = a, px = T.t[sym].px;
+  paCard($('#xpa'), { app: 'nf', kind: 'okx', sym, name: (STOCK_KO[sym] ? STOCK_KO[sym] + ' ' : '') + sym, last: px.last }).catch(() => {});
+  mtfCard($('#xmtf'), [['15m', '15분'], ['1H', '1시간'], ['4H', '4시간'], ['1D', '일봉']], async (k) => (await candles(sym, k, T)).cs).catch(() => {});
+  liqMapCard($('#xliq'), sym).catch(() => {}); whaleCard($('#xwh'), sym).catch(() => {});
   $('#sum').innerHTML = `<div class="card"><div class="row spread"><b style="font-size:18px">${sym} ${fmt(px.last)}</b><span class="${px.chg > 0 ? 'up' : 'down'}">${pct(px.chg)} (24시간)</span></div>
       <div class="row wrap" style="gap:4px;margin-top:6px">${scChip('🔼반등', a.upScore)}${scChip('🔽하락전환', a.dnScore)}<span class="scchip">RSI ${a.rsi.toFixed(1)}</span><span class="scchip">ATR ${a.atrPct.toFixed(2)}%</span><span class="scchip">거래량 ${a.volRatio ? a.volRatio.toFixed(1) : '-'}배</span></div>
       ${calmWhy(T.t[sym]) ? `<div class="warnlist" style="font-size:12px">⚠️ 안정 기준 밖 종목: ${esc(calmWhy(T.t[sym]))}. 갑자기 크게 움직이거나 원하는 가격에 사고팔기 어려울 수 있습니다.</div>` : ''}<div class="muted" style="font-size:12px;margin-top:6px">${esc(SCAN.META[sym].name)} · ${EXN[A.src]} ${TF[prefs.tf].label} ${cs.length}개</div></div>
@@ -456,7 +459,7 @@ async function viewFut() {
   const ses = usSession();
   view().innerHTML = `<div class="card" style="margin-top:0"><div class="row spread"><b>미국장</b><b style="color:${ses.c}">${ses.t}</b></div>
       <div class="muted" style="font-size:12px;margin-top:4px">뉴욕 ${ses.ny} · 정규장 한국 23:30~06:00(서머타임엔 22:30~05:00) · 무기한 선물은 24시간 거래되어 장이 닫힌 밤·주말엔 실제 ETF와 차이가 날 수 있습니다. 미국 공휴일은 따로 표시하지 않습니다.</div></div>
-    <div id="mk"></div>
+    <div id="mk"></div><div id="xecon"></div><div id="xliqA"></div>
     <div id="fut"><div class="card"><div class="muted">미결제약정·펀딩비·롱숏 비율을 받는 중…</div></div></div>
     <div class="card"><details><summary><b>지표 읽는 법</b></summary><ul class="steps" style="font-size:13px;margin-top:6px">
       <li><b>미결제약정(OI)</b>: 아직 정리되지 않은 선물 계약의 총액. 가격과 함께 늘면 새 돈이 그 방향으로 들어오는 것, 줄면 기존 포지션이 정리되는 것. '미결제 24시간'은 달러 금액이 아니라 <b>계약 수</b> 기준이라 가격이 올라 저절로 커지는 부분은 빠져 있습니다.</li>
@@ -466,6 +469,7 @@ async function viewFut() {
       <li><b>공격적 매수/매도 비율</b>(바이낸스, 최근 4시간): 시장가로 산 양 ÷ 판 양. 1보다 크면 사는 쪽이 더 급함.</li></ul></details></div>
     <div class="disc">${DISC}</div>`;
   macroCard($('#mk'), { title: '🌍 시장 전체(선물 기준)', groups: ['perp', 'us', 'fx', 'kr'] }).catch(() => {});
+  econCard($('#xecon')).catch(() => {}); liqAlertCard($('#xliqA')).catch(() => {});
   let D; try { D = await futData(); } catch (e) { if (live()) $('#fut').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
   if (!live()) return;
   const fr = (x) => (x == null ? '-' : (x * 100).toFixed(4) + '%');
