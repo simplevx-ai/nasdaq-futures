@@ -31,6 +31,7 @@ const BNQ = (() => {
     return `<div class="bq-asset">
       <div class="bq-head"><span class="bq-name">${e(a.icon)} ${e(a.name)}</span><span class="bq-price">${n0(a.price)}</span></div>
       <div class="bq-concl">${arrow(cs)} 결론 <b>${e(a.concl)}</b> <span class="bq-pct big">${a.prob}%</span> ${stars(a.cStar)}</div>
+      ${a.rel ? `<div class="bq-rel"><span class="bq-relg g-${a.rel.grade === '높음' ? 'hi' : a.rel.grade === '보통' ? 'mid' : 'lo'}">신뢰도 ${e(a.rel.grade)}</span> <span class="bq-sub">최근 1년 실제: ${paint(e(a.rel.text))}${a.rel.grade === '낮음' ? ' → 확률은 참고만' : ''}</span></div>` : ''}
       <div class="bq-race">${arrow(1)} ${n0(a.up.p)} 먼저 <span class="bq-pct">${a.up.pct}%</span> · ${arrow(-1)} ${n0(a.dn.p)} 먼저 <span class="bq-pct">${a.dn.pct}%</span> <span class="bq-sub">(최근 1년 비슷한 날 ${a.sims}일${a.sims < 60 ? ', 표본 적음' : ''})</span></div>
       ${tfRow}${plan}</div>`;
   }

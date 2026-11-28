@@ -289,3 +289,6 @@ table.bq-plan tr { border-top: 1px solid var(--line); }
 .bq-ft { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
 .bq-v { font-size: 12px; font-weight: 800; border-radius: 6px; padding: 1px 7px; margin-left: 2px; }
 .bq-v.good { background: rgba(224,38,42,.12); color: #E0262A; } .bq-v.bad { background: rgba(31,95,224,.12); color: #1F5FE0; } .bq-v.mid { background: var(--bg); color: var(--muted); }
+.bq-rel { margin-top: 6px; font-size: 13px; line-height: 1.5; }
+.bq-relg { display: inline-block; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 2px 8px; color: #fff; }
+.bq-relg.g-hi { background: #E0262A; } .bq-relg.g-mid { background: #D9822B; } .bq-relg.g-lo { background: #7A8299; }
