@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.10.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -459,7 +459,7 @@ async function viewFut() {
   const ses = usSession();
   view().innerHTML = `<div class="card" style="margin-top:0"><div class="row spread"><b>미국장</b><b style="color:${ses.c}">${ses.t}</b></div>
       <div class="muted" style="font-size:12px;margin-top:4px">뉴욕 ${ses.ny} · 정규장 한국 23:30~06:00(서머타임엔 22:30~05:00) · 무기한 선물은 24시간 거래되어 장이 닫힌 밤·주말엔 실제 ETF와 차이가 날 수 있습니다. 미국 공휴일은 따로 표시하지 않습니다.</div></div>
-    <div id="mk"></div><div id="xecon"></div><div id="xliqA"></div>
+    <div id="xbnq"></div><div id="mk"></div><div id="xecon"></div><div id="xliqA"></div>
     <div id="fut"><div class="card"><div class="muted">미결제약정·펀딩비·롱숏 비율을 받는 중…</div></div></div>
     <div class="card"><details><summary><b>지표 읽는 법</b></summary><ul class="steps" style="font-size:13px;margin-top:6px">
       <li><b>미결제약정(OI)</b>: 아직 정리되지 않은 선물 계약의 총액. 가격과 함께 늘면 새 돈이 그 방향으로 들어오는 것, 줄면 기존 포지션이 정리되는 것. '미결제 24시간'은 달러 금액이 아니라 <b>계약 수</b> 기준이라 가격이 올라 저절로 커지는 부분은 빠져 있습니다.</li>
@@ -468,6 +468,7 @@ async function viewFut() {
       <li><b>롱/숏 계좌 비율</b>(바이낸스·바이비트): 롱 계좌 수 ÷ 숏 계좌 수. 한쪽으로 크게 쏠리면 반대로 흔들릴 위험(쏠린 쪽 청산)이 큼.</li>
       <li><b>공격적 매수/매도 비율</b>(바이낸스, 최근 4시간): 시장가로 산 양 ÷ 판 양. 1보다 크면 사는 쪽이 더 급함.</li></ul></details></div>
     <div class="disc">${DISC}</div>`;
+  BNQ.card($('#xbnq')).catch(() => {}); // 🧠 비트코인·나스닥 분석(평일 18시 갱신)
   macroCard($('#mk'), { title: '🌍 시장 전체(선물 기준)', groups: ['perp', 'us', 'fx', 'kr'] }).catch(() => {});
   econCard($('#xecon')).catch(() => {}); liqAlertCard($('#xliqA')).catch(() => {});
   let D; try { D = await futData(); } catch (e) { if (live()) $('#fut').innerHTML = `<div class="card errbox">${esc(e.message)}</div>`; return; }
