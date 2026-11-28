@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.9.2';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -559,7 +559,7 @@ async function viewTools() {
       <label for="r_url">스크립트 웹 앱 주소</label><input id="r_url" value="${esc(cfg.url || '')}" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
       <label for="r_key">앱 키 (APP_KEY)</label><input id="r_key" type="password" value="${esc(cfg.key || '')}" autocomplete="off">
       <button class="btn primary block" id="r_save" type="button" style="margin-top:10px">저장하고 연결 확인</button><div id="r_res" style="margin-top:8px"></div></div>
-    <div class="card"><h2>앱 정보</h2><div class="muted" style="font-size:13px">선물 스캐너 v${APP_VERSION} · OKX·바이낸스 공개 시세(키·주문 없음) · 홈 화면에 추가: 크롬 ⋮ → '홈 화면에 추가'<br>계산: 스캐너·QQQ 규칙 신호는 '가격 위치' 앱과 같은 식, 매물대는 최근 200봉 거래량 분포.</div></div>
+    <div class="card"><h2>앱 정보</h2><div class="muted" style="font-size:13px">선물 스캐너 v${APP_VERSION} · OKX·바이낸스 공개 시세(키·주문 없음) · 홈 화면에 추가: 크롬 ⋮ → '홈 화면에 추가'<br>계산: 스캐너·QQQ 규칙 신호는 '가격 위치' 앱과 같은 식, 매물대는 최근 200봉 거래량 분포.</div>${updButton(APP_VERSION)}</div>
     <div class="disc">${DISC}</div>`;
   const calc = async () => {
     const v = (id) => parseFloat($('#' + id).value), side = $('[name=side]:checked').value;

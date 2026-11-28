@@ -1,6 +1,6 @@
 // 앱 화면 파일을 폰에 저장해 인터넷 없이도 열리게 한다(시세는 항상 새로 받음).
-const CACHE = 'nqfut-v1.9.1';
-const FILES = ['./', 'index.html', 'style.css', 'net.js', 'scan.js', 'levels.js', 'nq.js', 'nqui.js', 'macro.js', 'extras.js', 'sim.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
+const CACHE = 'nqfut-v1.9.2';
+const FILES = ['./', 'index.html', 'updater.js', 'style.css', 'net.js', 'scan.js', 'levels.js', 'nq.js', 'nqui.js', 'macro.js', 'extras.js', 'sim.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
