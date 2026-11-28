@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 /* ───────── 저장(IndexedDB 키-값) ───────── */
 const KV = (() => {
@@ -68,7 +68,7 @@ async function bybitEtfs() {
   KV.set('byEtf', { at: Date.now(), data }).catch(() => {});
   return data;
 }
-const STOCK_KO = { NVDA: '엔비디아', SNDK: '샌디스크', MU: '마이크론', SKHYNIX: 'SK하이닉스', SKHY: 'SK하이닉스(해외)', SAMSUNG: '삼성전자', TSLA: '테슬라', AAPL: '애플', GOOGL: '구글(알파벳)', AMZN: '아마존', MSFT: '마이크로소프트', META: '메타', AMD: 'AMD', INTC: '인텔', AVGO: '브로드컴', TSM: 'TSMC', MSTR: '스트래티지', CRCL: '서클', COIN: '코인베이스', ORCL: '오라클', MRVL: '마벨', ARM: 'ARM', DELL: '델', PLTR: '팔란티어', NFLX: '넷플릭스', HOOD: '로빈후드', CRWV: '코어위브', NBIS: '네비우스', RKLB: '로켓랩', ANTHROPIC: '앤트로픽(상장 전)', SPCX: '스페이스X(상장 전)', XIAOMI: '샤오미', CXMT: 'CXMT(창신메모리)', JD: '징둥', LITE: '루멘텀', COHR: '코히런트', AAOI: 'AAOI', AXTI: 'AXT', BE: '블룸에너지', BMNR: '비트마인', ZHONGJI: '중지쉬촹', UNITREE: '유니트리', ZHIPU: '즈푸AI', MINIMAX: '미니맥스', GIGADEV: '기가디바이스' };
+const STOCK_KO = { NVDA: '엔비디아', SNDK: '샌디스크', MU: '마이크론', SKHYNIX: 'SK하이닉스', SKHY: 'SK하이닉스(해외)', SAMSUNG: '삼성전자', TSLA: '테슬라', AAPL: '애플', GOOGL: '구글(알파벳)', AMZN: '아마존', MSFT: '마이크로소프트', META: '메타', AMD: 'AMD', INTC: '인텔', AVGO: '브로드컴', TSM: 'TSMC', MSTR: '스트래티지', CRCL: '서클', COIN: '코인베이스', ORCL: '오라클', MRVL: '마벨', ARM: 'ARM', DELL: '델', PLTR: '팔란티어', NFLX: '넷플릭스', HOOD: '로빈후드', CRWV: '코어위브', NBIS: '네비우스', RKLB: '로켓랩', ANTHROPIC: '앤트로픽(ANT·나스닥 상장)', SPCX: '스페이스X(상장 전)', XIAOMI: '샤오미', CXMT: 'CXMT(창신메모리)', JD: '징둥', LITE: '루멘텀', COHR: '코히런트', AAOI: 'AAOI', AXTI: 'AXT', BE: '블룸에너지', BMNR: '비트마인', ZHONGJI: '중지쉬촹', UNITREE: '유니트리', ZHIPU: '즈푸AI', MINIMAX: '미니맥스', GIGADEV: '기가디바이스' };
 async function okxStocks() {
   const hit = await KV.get('okxStk', null);
   if (hit && Date.now() - hit.at < 86400e3) return hit.data;
@@ -124,7 +124,7 @@ async function candles(sym, tf, T) {
   for (const src of ['okx', 'by', 'bn']) {
     // 봉마다 주식 분할 전 가격을 맞춘 뒤 씀(LV.fixSplits)
     if (!t[src]) continue;
-    try { const cs = LV.fixSplits(await candlesFrom(sym, src, tf)); if (!best || cs.length > best.cs.length) best = { src, cs }; if (cs.length >= 40) return { src, cs }; } catch { /* 다음 거래소 */ }
+    try { const cs = LV.fixSplits(await candlesFrom(sym, src, tf), sym); if (!best || cs.length > best.cs.length) best = { src, cs }; if (cs.length >= 40) return { src, cs }; } catch { /* 다음 거래소 */ }
   }
   if (!best) throw new Error(sym + ' 봉 데이터를 받지 못했습니다');
   return best;
@@ -255,7 +255,7 @@ async function viewScan() {
 function zoneBox(z, kind) {
   if (!z) return '';
   const buy = kind === 'buy';
-  return `<div class="zonebox ${buy ? 'zb' : 'zs'}"><b>📍 ${buy ? '매수' : '매도(숏)'} 검토 가격대 ${fmt(z.low)} ~ ${fmt(z.high)}</b> <span class="muted">(${z.inZone ? '지금 가격대 안' : '현재가 대비 ' + pct(z.dist)})</span>${z.star ? ' ★' : ''}<br><span style="font-size:12px">무효(손절) <b>${fmt(z.stop)}</b> · 1차 목표 <b>${fmt(z.target)}</b> · 손익비 1:${z.rr > 0 ? z.rr.toFixed(1) : '-'} · 근거: ${z.basis.map(esc).join('·')}${z.rr < 1 ? '<br><span style="color:#B26B00">⚠️ 손익비 1 미만 — 목표가가 가까워 들어갈 만한 자리가 아닐 수 있음</span>' : ''}</span></div>`;
+  return `<div class="zonebox ${buy ? 'zb' : 'zs'}"><b>📍 ${buy ? '매수' : '매도(숏)'} 검토 가격대 ${fmt(z.low)} ~ ${fmt(z.high)}</b> <span class="muted">(${z.inZone ? '지금 가격대 안' : '현재가 대비 ' + pct(z.dist)})</span>${z.star ? ' ★' : ''}<br><span style="font-size:12px">무효(손절) <b>${fmt(z.stop)}</b> · 목표 ${(z.targets || [z.target]).map((p, k) => `${k + 1}차 <b>${fmt(p)}</b>`).join(' · ')} · 1차 손익비 1:${z.rr > 0 ? z.rr.toFixed(1) : '-'} · 근거: ${z.basis.map(esc).join('·')}${z.rr < 1 ? '<br><span style="color:#B26B00">⚠️ 손익비 1 미만 — 목표가가 가까워 들어갈 만한 자리가 아닐 수 있음</span>' : ''}</span></div>`;
 }
 function scanRow(x, i, sort) {
   const m = SCAN.META[x.s], a = x.a, d = x.d, tk = x.tk, px = tk.px, st = x.st;
@@ -524,11 +524,12 @@ async function viewSignals() {
 /* ═════════ 🧮 도구(청산가 계산기·연결 설정) ═════════ */
 async function viewTools() {
   const live = takeView();
-  setTitle('🧮 도구');
+  setTitle('🧮 모의 수익·청산가 계산기');
   const cfg = await KV.get('relay', {}), pre = await KV.get('calcPrefill', null), cp = await KV.get('calc', { acct: 1000, risk: 1, lev: 3, side: 'long', rr: 2, mmr: 0.5 });
   if (!live()) return;
+  const simPre = pre && pre.entry ? { entry: +fmt(pre.entry), stop: pre.stop ? +fmt(pre.stop) : null, target: pre.stop ? +fmt(pre.entry + (pre.entry - pre.stop) * (pre.rr || 2)) : null } : null;
   if (pre) { cp.entry = +pre.entry.toFixed(2); cp.stop = +pre.stop.toFixed(2); cp.sym = pre.sym; cp.side = 'long'; if (pre.rr) cp.rr = pre.rr; await KV.set('calcPrefill', null); }
-  view().innerHTML = `<div class="card" style="margin-top:0"><h2>🧮 청산가 계산기 <span class="muted">${cp.sym ? '(' + esc(cp.sym) + ' 차트에서 가져옴)' : ''}</span></h2>
+  view().innerHTML = `${simCard(cp.sym)}<div class="card"><h2>🧮 수량·청산가 계산기 <span class="muted">${cp.sym ? '(' + esc(cp.sym) + ' 차트에서 가져옴)' : ''}</span></h2>
       <div class="calcintro">💡 <b>이렇게 씁니다</b>: "이번 거래가 틀리면 <b>최대 얼마까지 잃어도 되는지</b>"를 먼저 정하면, 손절가까지 거리를 보고 <b>몇 주(계약)를 사야 하는지</b> 거꾸로 계산해 줍니다. 손절가에 닿아도 정한 금액만 잃도록 수량을 맞추는 방법입니다.</div>
       <div class="seg" style="margin-top:8px"><label><input type="radio" name="side" value="long"${cp.side !== 'short' ? ' checked' : ''}><span>📈 롱 (오르면 이익)</span></label><label><input type="radio" name="side" value="short"${cp.side === 'short' ? ' checked' : ''}><span>📉 숏 (내리면 이익)</span></label></div>
       <div class="calcgrid">
@@ -585,6 +586,7 @@ async function viewTools() {
   $('#acct').addEventListener('input', riskHint); $('#risk').addEventListener('input', riskHint); riskHint();
   view().querySelectorAll('[name=side]').forEach((el) => { el.onchange = calc; });
   calc();
+  simBind(simPre);
   $('#r_save').onclick = async () => {
     const url = $('#r_url').value.trim(), key = $('#r_key').value.trim(), res = (h) => { $('#r_res').innerHTML = h; };
     if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) { alert('주소는 https://script.google.com/macros/s/…/exec 모양이어야 합니다'); return; }

@@ -64,13 +64,21 @@ const LV = (() => {
     return { price: p, vp, sup, res, where, inLvn };
   }
   // 매수 검토 가격대(반등 쪽): 현재가 아래 1.5 ATR 안의 지지(근거 2개 이상 우선) 주변. 무효(손절) = 가격대 아래 1 ATR, 1차 목표 = 가장 가까운 저항
+  // 1·2·3차 목표: 진입 쪽(dir=1 위, -1 아래)의 저항(지지)을 가까운 순서로, 0.5 ATR 안에 붙은 것은 하나로. 없으면 손절 폭의 2배, 모자라면 앞 목표에서 손절 폭만큼씩
+  function tgts(mid, risk, lvls, dir, A) {
+    const out = [];
+    lvls.filter((p) => (p - mid) * dir >= risk * 0.8).sort((x, y) => (x - y) * dir).forEach((p) => { if (out.length < 3 && (!out.length || Math.abs(p - out[out.length - 1]) >= A * 0.5)) out.push(p); });
+    if (!out.length) out.push(mid + dir * risk * 2); // 저항(지지)이 없으면 손절 폭의 2배
+    while (out.length < 3) out.push(out[out.length - 1] + dir * Math.max(risk, A)); // 모자라면 앞 목표에서 손절 폭(최소 1 ATR)씩 더
+    return out.slice(0, 3);
+  }
   function buyZone(lv, a) {
     const A = a.atr, p = a.price; if (!A || !lv) return null;
     const near = lv.sup.filter((s) => p - s.p <= 1.5 * A);
     const pick = near.find((s) => s.n >= 2) || near[0] || lv.sup[0]; if (!pick) return null;
     const low = pick.p - 0.25 * A, high = Math.min(p, pick.p + 0.5 * A), stop = low - A;
-    const mid = (low + high) / 2, target = lv.res[0] ? lv.res[0].p : mid + 2 * (mid - stop);
-    return { low, high, stop, target, rr: (target - mid) / (mid - stop), basis: pick.labels, star: pick.n >= 2, inZone: p >= low && p <= high * 1.001, dist: ((high / p) - 1) * 100 };
+    const mid = (low + high) / 2, targets = tgts(mid, mid - stop, lv.res.map((x) => x.p), 1, A), target = targets[0];
+    return { low, high, stop, target, targets, rr: (target - mid) / (mid - stop), basis: pick.labels, star: pick.n >= 2, inZone: p >= low && p <= high * 1.001, dist: ((high / p) - 1) * 100 };
   }
   // 매도(숏) 검토 가격대(하락 전환 쪽): 현재가 위 1.5 ATR 안의 저항 주변. 무효 = 가격대 위 1 ATR, 1차 목표 = 가장 가까운 지지
   function sellZone(lv, a) {
@@ -78,8 +86,8 @@ const LV = (() => {
     const near = lv.res.filter((s) => s.p - p <= 1.5 * A);
     const pick = near.find((s) => s.n >= 2) || near[0] || lv.res[0]; if (!pick) return null;
     const high = pick.p + 0.25 * A, low = Math.max(p, pick.p - 0.5 * A), stop = high + A;
-    const mid = (low + high) / 2, target = lv.sup[0] ? lv.sup[0].p : mid - 2 * (stop - mid);
-    return { low, high, stop, target, rr: (mid - target) / (stop - mid), basis: pick.labels, star: pick.n >= 2, inZone: p <= high && p >= low * 0.999, dist: ((low / p) - 1) * 100 };
+    const mid = (low + high) / 2, targets = tgts(mid, stop - mid, lv.sup.map((x) => x.p), -1, A), target = targets[0];
+    return { low, high, stop, target, targets, rr: (mid - target) / (stop - mid), basis: pick.labels, star: pick.n >= 2, inZone: p <= high && p >= low * 0.999, dist: ((low / p) - 1) * 100 };
   }
   // RSI 다이버전스(최근 40봉, 좌우 3봉 기준 스윙): 강세 = 가격 저점은 낮아졌는데 RSI 저점은 높아짐 / 약세 = 그 반대(고점)
   function divergence(cs, rsiArr) {
@@ -117,7 +125,9 @@ const LV = (() => {
   // 주식 분할(예: 10:1) 맞추기: 봉 기록에 분할 전 가격이 남아 있으면 변동성·매물대가 틀어짐.
   // 직전 종가→이번 시가, 또는 한 봉 안의 시가→종가가 1.85배 넘게 바뀌고 그 비율이 흔한 분할 비율에 가까우면 그 앞 봉들을 같은 비율로 맞춘다.
   const SPLIT_N = [2, 3, 4, 5, 8, 10, 15, 20, 25, 30, 40, 50, 100];
-  function fixSplits(cs) {
+  // 알려진 분할(봉 하나 안에서 분할과 큰 등락이 겹치면 비율이 헷갈려서 정답을 적어 둠). at = 분할 적용 시각(UTC)
+  const KNOWN_SPLITS = { SNDK: [{ at: Date.UTC(2026, 10, 19, 21, 1), n: 8 }] }; // 샌디스크 8:1, 2026-11-19 미국 장 마감 뒤
+  function fixSplits(cs, sym) {
     if (!cs || cs.length < 3) return cs;
     const out = cs.map((k) => ({ t: k.t, o: k.o, h: k.h, l: k.l, c: k.c, v: k.v }));
     let fixed = 0;
@@ -125,8 +135,9 @@ const LV = (() => {
       const k = out[i];
       let r = out[i - 1].c / k.o, within = false;
       if (!(r > 1.85 || r < 0.54)) { r = k.o / k.c; within = true; if (!(r > 1.85 || r < 0.54)) continue; }
-      const big = r > 1 ? r : 1 / r, n = SPLIT_N.reduce((p, q) => (Math.abs(q - big) < Math.abs(p - big) ? q : p));
-      if (Math.abs(n - big) / n > (n <= 3 ? 0.06 : 0.25)) continue; // 분할 비율과 멀면 진짜 급등락으로 보고 그대로 둠(2·3배는 거의 딱 맞을 때만)
+      const big = r > 1 ? r : 1 / r, kn = (KNOWN_SPLITS[String(sym || '').toUpperCase()] || []).find((x) => Math.abs(k.t - x.at) <= 3 * 86400e3 && big >= x.n * 0.6 && big <= x.n * 1.6);
+      const n = kn ? kn.n : SPLIT_N.reduce((p, q) => (Math.abs(q - big) < Math.abs(p - big) ? q : p));
+      if (!kn && Math.abs(n - big) / n > (n <= 3 ? 0.06 : 0.25)) continue; // 분할 비율과 멀면 진짜 급등락으로 보고 그대로 둠(2·3배는 거의 딱 맞을 때만)
       const f = r > 1 ? 1 / n : n;
       for (let j = 0; j < i; j++) { const x = out[j]; x.o *= f; x.h *= f; x.l *= f; x.c *= f; x.v /= f; }
       if (within) { // 분할이 그 봉 안에서 일어남: 분할 전 쪽 값(시가와, 분할 전에 찍힌 고가·저가)만 맞춤

@@ -251,3 +251,7 @@ ul.lvl { list-style: none; padding: 0; margin: 4px 0 8px; font-size: 14px; } ul.
 .calcgrid .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .calcsum { background: rgba(31,157,99,.10); border: 1px solid rgba(31,157,99,.45); border-radius: 10px; padding: 9px 11px; font-size: 14px; line-height: 1.55; margin-bottom: 8px; }
 table.calctbl { width: 100%; border-collapse: collapse; font-size: 13px; } table.calctbl th { text-align: left; font-weight: 500; color: var(--muted); padding: 5px 4px; border-bottom: 1px solid var(--line); } table.calctbl td { text-align: right; padding: 5px 4px; border-bottom: 1px solid var(--line); }
+
+/* 모의 수익 계산기 칩 */
+.sim-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.sim-chips .chip { padding: 4px 9px; font-size: 13px; }
